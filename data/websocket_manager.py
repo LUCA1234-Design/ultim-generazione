@@ -120,8 +120,7 @@ def _run_ws(ws_name: str, url: str) -> None:
             retries = 0  # Reset backoff after successful connection
             ws_app.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_NONE},
-                ping_interval=30,
-                ping_timeout=20,
+                ping_interval=0,  # Disable client-side ping; Binance server handles keepalive with its own pings
             )
         except Exception as e:
             logger.error(f"WS [{ws_name}] exception: {e}")
