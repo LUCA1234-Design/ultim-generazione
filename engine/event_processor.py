@@ -171,6 +171,10 @@ class EventProcessor:
         fusion_result = self.fusion.fuse(symbol, interval, agent_results)
 
         if fusion_result.decision == DECISION_HOLD:
+            self._skip("hold_decision")
+            return None
+        if fusion_result.final_score < MIN_FUSION_SCORE:
+            self._skip("low_fusion_score")
             return None
 
         # ---- Open position ----
