@@ -254,7 +254,7 @@ class ExecutionEngine:
         risk_blocked, risk_reason = self.is_risk_blocked()
 
         return {
-            _skip_reasons
+            "paper_trading": self.paper_trading,
             "balance": self._balance,
             "initial_balance": self._initial_balance,
             "total_pnl": self._total_pnl,
