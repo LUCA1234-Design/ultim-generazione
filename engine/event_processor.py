@@ -161,6 +161,10 @@ class EventProcessor:
             agent_results["strategy"] = strategy_result
 
         if not agent_results:
+            self._skip("no_agent_results")
+            return None
+        if len(agent_results) < MIN_AGENT_CONFIRMATIONS:
+            self._skip("insufficient_confirmations")
             return None
 
         # ---- Fuse decisions ----
