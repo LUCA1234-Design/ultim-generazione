@@ -105,6 +105,7 @@ class EventProcessor:
 
         # Guard: forbidden hours
         if self._is_forbidden_hour():
+            self._skip("forbidden_hour")
             return None
 
         # Guard: cooldown
