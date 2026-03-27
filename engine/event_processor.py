@@ -138,7 +138,7 @@ class EventProcessor:
             agent_results["pattern"] = pattern_result
             direction_hint = pattern_result.direction
         else:
-            direction_hint = "long"  # default
+            direction_hint = "neutral"
 
         # Regime agent
         regime_result = self.regime.safe_analyse(symbol, interval, df)
