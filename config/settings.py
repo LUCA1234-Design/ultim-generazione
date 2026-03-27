@@ -38,6 +38,22 @@ MAX_OPEN_POSITIONS = 5
 LEVERAGE = 10
 
 # ============================================================
+# RISK GUARDS / QUALITY GATES
+# ============================================================
+
+MAX_DAILY_LOSS_USDT = 50.0
+MAX_DAILY_LOSS_PCT = 5.0
+MAX_CONSECUTIVE_LOSSES = 3
+
+MIN_FUSION_SCORE = 0.60
+MIN_AGENT_CONFIRMATIONS = 3
+MIN_RR = 1.50
+
+WS_STALE_TIMEOUT = 25
+WS_HEALTH_LOG_INTERVAL = 300
+WS_MAX_FAIL_COUNT_ALERT = 5
+
+# ============================================================
 # HIDDEN GEMS (HG)
 # ============================================================
 
