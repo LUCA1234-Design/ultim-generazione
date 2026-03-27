@@ -101,6 +101,33 @@ class ExecutionEngine:
             f"ExecutionEngine: {'PAPER' if paper_trading else 'LIVE'} trading | "
             f"balance={initial_balance}"
         )
+    def _roll_day_if_needed(self) -> None:
+        today = datetime.datetime.now(datetime.timezone.utc).date()
+        if today != self._current_day:
+            self._current_day = today
+            self._daily_pnl = 0.0
+            self._consecutive_losses = 0
+            logger.info("🔄 Daily risk counters reset")
+
+    def is_risk_blocked(self) -> tuple[bool, str]:
+        self._roll_day_if_needed()
+
+        daily_loss_usdt = max(0.0, -self._daily_pnl)
+        daily_loss_pct = (
+            (daily_loss_usdt / self._initial_balance) * 100
+            if self._initial_balance > 0 else 0.0
+        )
+
+        if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
+            return True, "max_daily_loss_usdt"
+
+        if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
+            return True, "max_daily_loss_pct"
+
+        if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+            return True, "max_consecutive_losses"
+
+        return False, ""
 
     # ------------------------------------------------------------------
     # Position management
