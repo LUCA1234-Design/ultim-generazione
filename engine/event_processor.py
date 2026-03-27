@@ -228,10 +228,10 @@ class EventProcessor:
         """Called on every realtime update to check SL/TP for open positions."""
         self.execution.check_position_levels(symbol, current_price)
 
-       def get_stats(self) -> Dict[str, Any]:
-           return {
+    def get_stats(self) -> Dict[str, Any]:
+        return {
                "processed": self._processed_count,
                "signals": self._signal_count,
                "skip_reasons": dict(self._skip_reasons),
                "execution": self.execution.get_stats(),
-           }
+        } 
