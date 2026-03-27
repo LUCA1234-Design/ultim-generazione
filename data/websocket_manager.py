@@ -31,8 +31,11 @@ logger = logging.getLogger("WebSocketManager")
 # Global WS health registry
 # ---------------------------------------------------------------------------
 
-WS_HEALTH: Dict[str, dict] = {}          # {name: {alive: bool, last_msg: float}}
-_LAST_KLINE_TIME: Dict[str, int] = {}    # {symbol_interval: open_time_ms}
+WS_HEALTH: Dict[str, dict] = {}
+_LAST_KLINE_TIME: Dict[str, int] = {}
+_LAST_MESSAGE_TIME: Dict[str, float] = {}
+_WS_FAILCOUNT: Dict[str, int] = {}
+_WS_URLS: Dict[str, str] = {}
 
 # Callbacks registered by the event processor
 _on_kline_closed: Optional[Callable] = None
