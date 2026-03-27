@@ -163,6 +163,9 @@ def build_system():
     execution = ExecutionEngine(paper_trading=PAPER_TRADING, initial_balance=ACCOUNT_BALANCE)
     tracker = PerformanceTracker()
 
+    # decision_id -> context used later on position close
+    decision_context: Dict[str, Dict[str, Any]] = {}
+
     # Load historical win rates from DB into RiskAgent
     try:
         from memory.experience_db import get_agent_win_rates
@@ -216,6 +219,21 @@ def build_system():
         except Exception as e:
             logger.error(f"DB save decision error: {e}")
 
+        # Save runtime context for later close handling
+        try:
+            decision_context[fusion_result.decision_id] = {
+                "symbol": fusion_result.symbol,
+                "interval": fusion_result.interval,
+                "decision": fusion_result.decision,
+                "agent_scores": dict(fusion_result.agent_scores or {}),
+                "agent_directions": {
+                    name: getattr(result, "direction", "")
+                    for name, result in agent_results.items()
+                },
+            }
+        except Exception as e:
+            logger.error(f"Decision context cache error: {e}")
+
     processor = EventProcessor(
         pattern_agent=pattern,
         regime_agent=regime,
@@ -229,7 +247,7 @@ def build_system():
     )
 
     logger.info("✅ V17 agent system ready")
-    return processor, meta, tracker, execution, risk
+    return processor, meta, tracker, execution, risk, decision_context
 
 
 # ---------------------------------------------------------------------------
