@@ -125,6 +125,7 @@ class EventProcessor:
 
         df = data_store.get_df(symbol, interval)
         if df is None or len(df) < 50:
+            self._skip("insufficient_data")
             return None
 
         # ---- Run agents ----
