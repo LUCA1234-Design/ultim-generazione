@@ -58,6 +58,19 @@ class EventProcessor:
         self._last_signal_time: Dict[str, float] = {}
         self._processed_count = 0
         self._signal_count = 0
+        self._skip_reasons: Dict[str, int] = {
+            "forbidden_hour": 0,
+            "cooldown": 0,
+            "max_open_positions": 0,
+            "existing_symbol_position": 0,
+            "insufficient_data": 0,
+            "no_agent_results": 0,
+            "insufficient_confirmations": 0,
+            "hold_decision": 0,
+            "low_fusion_score": 0,
+            "low_rr": 0,
+            "missing_direction": 0,
+        }
 
     # ------------------------------------------------------------------
     # Time guards
