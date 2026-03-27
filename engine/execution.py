@@ -183,7 +183,8 @@ class ExecutionEngine:
         pos.close_time = time.time()
         pos.pnl = pos.unrealised_pnl(close_price)
         pos.status = reason
-
+        
+        self._roll_day_if_needed()
         self._balance += pos.pnl
         self._total_pnl += pos.pnl
         self._trade_count += 1
