@@ -60,7 +60,7 @@ class EventProcessor:
     # ------------------------------------------------------------------
 
     def _is_forbidden_hour(self) -> bool:
-        return datetime.datetime.utcnow().hour in ORARI_VIETATI_UTC
+        return datetime.datetime.now(datetime.timezone.utc).hour in ORARI_VIETATI_UTC
 
     def _is_signal_cooled(self, symbol: str, interval: str) -> bool:
         key = f"{symbol}_{interval}"
