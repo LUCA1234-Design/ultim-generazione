@@ -47,9 +47,10 @@ from memory.performance_tracker import PerformanceTracker
 
 # ---- Notifications ----
 from notifications.telegram_service import (
-    send_message, test_connection, build_signal_message,
+    send_message, send_photo, test_connection, build_signal_message,
     build_startup_message, build_stats_message, notify_position_closed,
 )
+from notifications.chart_generator import generate_signal_chart
 
 # ---- Logging ----
 logging.basicConfig(
@@ -178,6 +179,25 @@ def build_system():
             send_message(msg)
         except Exception as e:
             logger.error(f"Signal notification error: {e}")
+
+        # Send candlestick chart
+        try:
+            df = data_store.get_df(fusion_result.symbol, fusion_result.interval)
+            if df is not None and len(df) > 20:
+                chart_bytes = generate_signal_chart(
+                    df=df,
+                    symbol=fusion_result.symbol,
+                    interval=fusion_result.interval,
+                    direction=fusion_result.decision,
+                    entry=position.entry_price,
+                    sl=position.sl,
+                    tp1=position.tp1,
+                    tp2=position.tp2,
+                )
+                if chart_bytes:
+                    send_photo(chart_bytes, caption=f"📊 {fusion_result.symbol} [{fusion_result.interval}]")
+        except Exception as e:
+            logger.error(f"Chart send error: {e}")
 
         # Persist decision to DB
         try:
