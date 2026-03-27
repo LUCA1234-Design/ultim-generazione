@@ -6,3 +6,4 @@ python-binance>=1.0.17
 websocket-client>=1.6.0
 requests>=2.31.0
 matplotlib>=3.7.0
+mplfinance>=0.12.10
