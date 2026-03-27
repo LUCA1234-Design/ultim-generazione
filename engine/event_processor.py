@@ -117,8 +117,10 @@ class EventProcessor:
         open_pos = self.execution.get_open_positions()
         open_for_symbol = [p for p in open_pos if p.symbol == symbol]
         if len(open_pos) >= MAX_OPEN_POSITIONS:
+            self._skip("max_open_positions")
             return None
         if open_for_symbol:
+            self._skip("existing_symbol_position")
             return None  # Already have a position on this symbol
 
         df = data_store.get_df(symbol, interval)
