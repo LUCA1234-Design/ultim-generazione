@@ -18,9 +18,13 @@ from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD
 from engine.execution import ExecutionEngine
 from data import data_store
 from config.settings import (
-    ORARI_VIETATI_UTC, ORARI_MIGLIORI_UTC,
-    SIGNAL_COOLDOWN_BY_TF, SIGNAL_COOLDOWN,
+    ORARI_VIETATI_UTC,
+    SIGNAL_COOLDOWN_BY_TF,
+    SIGNAL_COOLDOWN,
     MAX_OPEN_POSITIONS,
+    MIN_FUSION_SCORE,
+    MIN_AGENT_CONFIRMATIONS,
+    MIN_RR,
 )
 
 logger = logging.getLogger("EventProcessor")
