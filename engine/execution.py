@@ -187,9 +187,14 @@ class ExecutionEngine:
         self._roll_day_if_needed()
         self._balance += pos.pnl
         self._total_pnl += pos.pnl
+        self._daily_pnl += pos.pnl
         self._trade_count += 1
+
         if pos.pnl > 0:
             self._win_count += 1
+            self._consecutive_losses = 0
+        else:
+            self._consecutive_losses += 1
 
         self._closed_positions.append(pos)
         emoji = "✅" if pos.pnl > 0 else "❌"
