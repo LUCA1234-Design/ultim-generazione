@@ -254,18 +254,76 @@ def build_system():
 # Position monitoring thread
 # ---------------------------------------------------------------------------
 
-def _position_monitor(processor: EventProcessor, interval_sec: int = 10) -> None:
+def _position_monitor(
+    processor: EventProcessor,
+    tracker: PerformanceTracker,
+    decision_context: Dict[str, Dict[str, Any]],
+    interval_sec: int = 10,
+) -> None:
     """Periodically update SL/TP levels for open positions using latest prices."""
     while True:
         try:
             open_pos = processor.execution.get_open_positions()
             for pos in open_pos:
                 df = data_store.get_df(pos.symbol, pos.interval)
-                if df is not None and not df.empty:
-                    current_price = float(df["close"].iloc[-1])
-                    processor.on_price_update(pos.symbol, current_price)
+                if df is None or df.empty:
+                    continue
+
+                current_price = float(df["close"].iloc[-1])
+                closed_positions = processor.execution.check_position_levels(pos.symbol, current_price)
+
+                for closed in closed_positions:
+                    # Track performance
+                    try:
+                        tracker.record_position(closed)
+                    except Exception as e:
+                        logger.error(f"tracker.record_position error: {e}")
+
+                    # Notify close
+                    try:
+                        notify_position_closed(closed)
+                    except Exception as e:
+                        logger.error(f"notify_position_closed error: {e}")
+
+                    # Update decision outcome in DB
+                    try:
+                        if closed.decision_id:
+                            experience_db.update_decision_outcome(
+                                decision_id=closed.decision_id,
+                                outcome=closed.status,
+                                pnl=closed.pnl or 0.0,
+                            )
+                    except Exception as e:
+                        logger.error(f"update_decision_outcome error: {e}")
+
+                    # Save agent outcomes in DB
+                    try:
+                        ctx = decision_context.get(closed.decision_id, {})
+                        agent_scores = ctx.get("agent_scores", {})
+                        agent_directions = ctx.get("agent_directions", {})
+                        correct = (closed.pnl or 0.0) > 0
+
+                        for agent_name, score in agent_scores.items():
+                            experience_db.save_agent_outcome(
+                                decision_id=closed.decision_id,
+                                agent_name=agent_name,
+                                score=float(score),
+                                direction=str(agent_directions.get(agent_name, "")),
+                                correct=correct,
+                            )
+                    except Exception as e:
+                        logger.error(f"save_agent_outcome error: {e}")
+
+                    # Clean runtime context
+                    try:
+                        if closed.decision_id in decision_context:
+                            decision_context.pop(closed.decision_id, None)
+                    except Exception as e:
+                        logger.debug(f"decision_context cleanup error: {e}")
+
         except Exception as e:
             logger.debug(f"position_monitor error: {e}")
+
         time.sleep(interval_sec)
 
 
