@@ -85,7 +85,7 @@ def build_signal_message(
     score = fusion.final_score
 
     dir_emoji = "📈" if direction == "long" else "📉"
-    hour = datetime.datetime.utcnow().hour
+    hour = datetime.datetime.now(datetime.timezone.utc).hour
 
     from config.settings import ORARI_MIGLIORI_UTC
     time_quality = "🟢" if hour in ORARI_MIGLIORI_UTC else "🟡"
