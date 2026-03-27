@@ -70,6 +70,9 @@ class EventProcessor:
             "low_fusion_score": 0,
             "low_rr": 0,
             "missing_direction": 0,
+            "max_daily_loss_usdt": 0,
+            "max_daily_loss_pct": 0,
+            "max_consecutive_losses": 0,
         }
 
     # ------------------------------------------------------------------
