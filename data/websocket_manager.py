@@ -117,10 +117,11 @@ def _run_ws(ws_name: str, url: str) -> None:
                 on_open=lambda ws: logger.debug(f"WS [{ws_name}] connected"),
             )
             WS_HEALTH[ws_name] = {"alive": True, "last_msg": time.time()}
+            retries = 0  # Reset backoff after successful connection
             ws_app.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_NONE},
-                ping_interval=20,
-                ping_timeout=10,
+                ping_interval=30,
+                ping_timeout=20,
             )
         except Exception as e:
             logger.error(f"WS [{ws_name}] exception: {e}")
@@ -156,7 +157,7 @@ def start_websockets(symbols: List[str], timeframes: List[str] = None) -> int:
             )
             t.start()
             count += 1
-            time.sleep(0.05)
+            time.sleep(0.3)
     logger.info(f"🌐 {count} WebSocket threads started")
     return count
 
