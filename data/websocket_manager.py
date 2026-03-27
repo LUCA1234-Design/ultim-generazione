@@ -217,6 +217,14 @@ def start_websockets(symbols: List[str], timeframes: List[str] = None) -> int:
             t.start()
             count += 1
             time.sleep(0.3)
+    
+    t = threading.Thread(
+        target=_health_logger_loop,
+        daemon=True,
+        name="WS-HEALTH-LOGGER",
+    )
+    t.start()
+
     logger.info(f"🌐 {count} WebSocket threads started")
     return count
 
