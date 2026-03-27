@@ -126,6 +126,10 @@ class EventProcessor:
         if open_for_symbol:
             self._skip("existing_symbol_position")
             return None  # Already have a position on this symbol
+        risk_blocked, risk_reason = self.execution.is_risk_blocked()
+        if risk_blocked:
+            self._skip(risk_reason)
+            return None
 
         df = data_store.get_df(symbol, interval)
         if df is None or len(df) < 50:
