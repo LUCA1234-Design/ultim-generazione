@@ -98,7 +98,15 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
         is_closed: bool = kline.get("x", False)
         key = f"{symbol}_{interval}"
 
-        WS_HEALTH[ws_name] = {"alive": True, "last_msg": time.time()}
+        now = time.time()
+        _LAST_MESSAGE_TIME[ws_name] = now
+        WS_HEALTH[ws_name] = {
+            "alive": True,
+            "last_msg": now,
+            "last_error": None,
+            "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
+            "restarts": WS_HEALTH.get(ws_name, {}).get("restarts", 0),
+        }
 
         if _on_kline_update:
             _on_kline_update(symbol, interval, kline)
