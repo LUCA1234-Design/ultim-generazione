@@ -86,6 +86,8 @@ class EventProcessor:
 
     def _mark_signal(self, symbol: str, interval: str) -> None:
         self._last_signal_time[f"{symbol}_{interval}"] = time.time()
+    def _skip(self, reason: str) -> None:
+        self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
 
     # ------------------------------------------------------------------
     # Main event handler
