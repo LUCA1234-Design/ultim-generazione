@@ -427,7 +427,7 @@ def main():
         # ---- Background threads ----
         threading.Thread(
             target=_position_monitor,
-            args=(processor,),
+            args=(processor, tracker, decision_context),
             daemon=True,
             name="PositionMonitor",
         ).start()
