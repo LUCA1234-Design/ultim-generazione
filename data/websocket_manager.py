@@ -265,6 +265,22 @@ def get_health_summary() -> dict:
         "max_fail_count": max_fail,
     }
 
+def _health_logger_loop() -> None:
+    while True:
+        try:
+            summary = get_health_summary()
+            logger.info(
+                "🩺 WS health | total=%s alive=%s stale=%s dead=%s max_fail=%s",
+                summary["total"],
+                summary["alive"],
+                summary["stale"],
+                summary["dead"],
+                summary["max_fail_count"],
+            )
+        except Exception as e:
+            logger.error(f"WS health logger error: {e}")
+        time.sleep(WS_HEALTH_LOG_INTERVAL)
+
 
 # ---------------------------------------------------------------------------
 # REST fallback poller
