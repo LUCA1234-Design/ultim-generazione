@@ -94,6 +94,9 @@ class ExecutionEngine:
         self._total_pnl = 0.0
         self._trade_count = 0
         self._win_count = 0
+        self._daily_pnl = 0.0
+        self._consecutive_losses = 0
+        self._current_day = datetime.datetime.now(datetime.timezone.utc).date()
         logger.info(
             f"ExecutionEngine: {'PAPER' if paper_trading else 'LIVE'} trading | "
             f"balance={initial_balance}"
