@@ -110,6 +110,7 @@ class EventProcessor:
 
         # Guard: cooldown
         if not self._is_signal_cooled(symbol, interval):
+            self._skip("cooldown")
             return None
 
         # Guard: max open positions
