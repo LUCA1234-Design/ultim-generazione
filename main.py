@@ -397,7 +397,7 @@ def main():
                 preload_historical(hg_extra, "HG")
 
         # ---- Build V17 system ----
-        processor, meta, tracker, execution, risk_agent = build_system()
+        processor, meta, tracker, execution, risk_agent, decision_context = build_system()
 
         # ---- Wire WebSocket callbacks ----
         all_symbols = list(set(symbols_whitelist + (symbols_hg_all if HG_MONITOR_ALL else [])))
