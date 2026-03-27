@@ -252,9 +252,18 @@ def get_health_summary() -> dict:
     alive = sum(1 for d in WS_HEALTH.values() if d.get("alive", False))
     stale = sum(
         1 for d in WS_HEALTH.values()
-        if d.get("alive", False) and (now - d.get("last_msg", 0)) > 30
+        if (now - d.get("last_msg", 0)) > WS_STALE_TIMEOUT
     )
-    return {"total": total, "alive": alive, "stale": stale, "dead": total - alive}
+    dead = sum(1 for d in WS_HEALTH.values() if not d.get("alive", False))
+    max_fail = max(_WS_FAILCOUNT.values(), default=0)
+
+    return {
+        "total": total,
+        "alive": alive,
+        "stale": stale,
+        "dead": dead,
+        "max_fail_count": max_fail,
+    }
 
 
 # ---------------------------------------------------------------------------
