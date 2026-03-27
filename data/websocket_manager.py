@@ -234,7 +234,7 @@ def startup_health_check(timeout: int = 25) -> bool:
             continue
         now = time.time()
         all_ok = all(
-            d.get("alive", False) and (now - d.get("last_msg", 0) < 15)
+            d.get("alive", False) and (now - d.get("last_msg", 0) < WS_STALE_TIMEOUT)
             for d in WS_HEALTH.values()
         )
         if all_ok:
