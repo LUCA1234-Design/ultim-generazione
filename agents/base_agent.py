@@ -53,7 +53,7 @@ class BaseAgent(abc.ABC):
         self._weight = max(0.01, min(value, 10.0))
 
     @abc.abstractmethod
-    def analyse(self, symbol: str, interval: str, df) -> Optional[AgentResult]:
+    def analyse(self, symbol: str, interval: str, df, *args, **kwargs) -> Optional[AgentResult]:
         """Analyse the given DataFrame and return a scored result.
 
         Parameters
@@ -61,17 +61,18 @@ class BaseAgent(abc.ABC):
         symbol : str   – e.g. "BTCUSDT"
         interval : str – e.g. "1h"
         df : pd.DataFrame – OHLCV DataFrame
+        *args, **kwargs – extra arguments forwarded to subclass implementations
 
         Returns
         -------
         AgentResult or None if insufficient data.
         """
 
-    def safe_analyse(self, symbol: str, interval: str, df) -> Optional[AgentResult]:
+    def safe_analyse(self, symbol: str, interval: str, df, *args, **kwargs) -> Optional[AgentResult]:
         """Wrapper around analyse() that catches exceptions."""
         self._call_count += 1
         try:
-            return self.analyse(symbol, interval, df)
+            return self.analyse(symbol, interval, df, *args, **kwargs)
         except Exception as exc:
             self._error_count += 1
             import logging
