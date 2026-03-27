@@ -85,13 +85,16 @@ class RegimeAgent(BaseAgent):
             return False
         try:
             scaled = self._scaler.fit_transform(features)
-            self._gmm = GaussianMixture(
+            gmm = GaussianMixture(
                 n_components=self.n_components,
                 covariance_type="full",
                 random_state=42,
                 max_iter=200,
             )
-            self._gmm.fit(scaled)
+            gmm.fit(scaled)
+            if not hasattr(gmm, "means_"):
+                raise ValueError("GMM did not converge (means_ missing)")
+            self._gmm = gmm  # Only assign after successful fit
             self._fitted = True
             self._assign_regime_labels(features)
             logger.debug(f"RegimeAgent fitted on {symbol}/{interval} ({len(features)} samples)")
@@ -102,7 +105,7 @@ class RegimeAgent(BaseAgent):
 
     def _assign_regime_labels(self, features: np.ndarray) -> None:
         """Assign human-readable labels to GMM components based on mean ADX & BB/KC ratio."""
-        if self._gmm is None:
+        if self._gmm is None or not hasattr(self._gmm, "means_"):
             return
         means = self._scaler.inverse_transform(self._gmm.means_)
         # means columns: adx, bb_kc_ratio, zscore, rsi, vol_ratio, ema_slope
