@@ -166,12 +166,15 @@ class ExecutionEngine:
 
         return pos
 
-    def check_position_levels(self, symbol: str, current_price: float) -> None:
-        """Check all open positions for SL/TP hits."""
-        to_close = []
+    def check_position_levels(self, symbol: str, current_price: float) -> List[Position]:
+        """Check all open positions for SL/TP hits and return closed positions."""
+        to_close: List[Tuple[str, float, str]] = []
+        closed_positions: List[Position] = []
+
         for pos_id, pos in list(self._open_positions.items()):
             if pos.symbol != symbol:
                 continue
+
             if pos.direction == "long":
                 if current_price <= pos.sl:
                     to_close.append((pos_id, current_price, "sl_hit"))
@@ -193,7 +196,11 @@ class ExecutionEngine:
                     to_close.append((pos_id, current_price, "tp2_hit"))
 
         for pos_id, price, reason in to_close:
-            self.close_position(pos_id, price, reason)
+            closed = self.close_position(pos_id, price, reason)
+            if closed is not None:
+                closed_positions.append(closed)
+
+        return closed_positions
 
     # ------------------------------------------------------------------
     # Stats
