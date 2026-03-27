@@ -250,6 +250,9 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> Dict[str, Any]:
+        self._roll_day_if_needed()
+        risk_blocked, risk_reason = self.is_risk_blocked()
+
         return {
             "paper_trading": self.paper_trading,
             "balance": self._balance,
@@ -260,6 +263,10 @@ class ExecutionEngine:
             "win_count": self._win_count,
             "win_rate": self._win_count / max(self._trade_count, 1),
             "open_positions": len(self._open_positions),
+            "daily_pnl": self._daily_pnl,
+            "consecutive_losses": self._consecutive_losses,
+            "risk_blocked": risk_blocked,
+            "risk_block_reason": risk_reason,
         }
 
     def get_open_positions(self) -> List[Position]:
