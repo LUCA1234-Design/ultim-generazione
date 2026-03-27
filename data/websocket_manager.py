@@ -48,6 +48,17 @@ def register_callbacks(on_closed: Callable, on_update: Callable) -> None:
     _on_kline_closed = on_closed
     _on_kline_update = on_update
 
+def _init_ws_state(ws_name: str) -> None:
+    WS_HEALTH[ws_name] = {
+        "alive": False,
+        "last_msg": 0.0,
+        "last_error": None,
+        "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
+        "restarts": 0,
+    }
+    _LAST_MESSAGE_TIME.setdefault(ws_name, 0.0)
+    _WS_FAILCOUNT.setdefault(ws_name, 0)
+
 
 # ---------------------------------------------------------------------------
 # Stream URL helpers
