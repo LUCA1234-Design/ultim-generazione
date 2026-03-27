@@ -11,7 +11,14 @@ from typing import Dict, List, Optional, Any, Tuple
 
 import numpy as np
 
-from config.settings import PAPER_TRADING, ACCOUNT_BALANCE, LEVERAGE
+from config.settings import (
+    PAPER_TRADING,
+    ACCOUNT_BALANCE,
+    LEVERAGE,
+    MAX_DAILY_LOSS_USDT,
+    MAX_DAILY_LOSS_PCT,
+    MAX_CONSECUTIVE_LOSSES,
+)
 from data.binance_client import place_futures_order
 
 logger = logging.getLogger("Execution")
