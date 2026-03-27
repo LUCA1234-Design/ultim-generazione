@@ -186,6 +186,17 @@ class EventProcessor:
         entry = risk_meta.get("entry", float(df["close"].iloc[-1]))
         strategy_name = strategy_result.metadata.get("strategy", "") if strategy_result else ""
 
+        try:
+            risk = abs(entry - sl)
+            reward = abs(tp2 - entry)
+            rr = reward / risk if risk > 0 else 0.0
+        except Exception:
+            rr = 0.0
+
+        if rr < MIN_RR:
+            self._skip("low_rr")
+            return None
+
         position = self.execution.open_position(
             symbol=symbol,
             interval=interval,
