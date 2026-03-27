@@ -132,26 +132,61 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
 
 def _run_ws(ws_name: str, url: str) -> None:
     retries = 0
+    _WS_URLS[ws_name] = url
+    _init_ws_state(ws_name)
+
     while True:
         try:
+            logger.info(f"WS [{ws_name}] connecting...")
             ws_app = websocket.WebSocketApp(
                 url,
                 on_message=lambda ws, msg: _handle_message(ws_name, msg),
                 on_error=lambda ws, err: logger.warning(f"WS [{ws_name}] error: {err}"),
                 on_close=lambda ws, code, msg: logger.info(f"WS [{ws_name}] closed ({code})"),
-                on_open=lambda ws: logger.debug(f"WS [{ws_name}] connected"),
+                on_open=lambda ws: logger.info(f"WS [{ws_name}] connected"),
             )
-            WS_HEALTH[ws_name] = {"alive": True, "last_msg": time.time()}
-            retries = 0  # Reset backoff after successful connection
+
+            WS_HEALTH[ws_name] = {
+                "alive": True,
+                "last_msg": _LAST_MESSAGE_TIME.get(ws_name, 0.0),
+                "last_error": None,
+                "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
+                "restarts": WS_HEALTH.get(ws_name, {}).get("restarts", 0),
+            }
+
+            retries = 0
             ws_app.run_forever(
                 sslopt={"cert_reqs": ssl.CERT_NONE},
-                ping_interval=0,  # Disable client-side ping; Binance server handles keepalive with its own pings
+                ping_interval=0,
             )
+
         except Exception as e:
             logger.error(f"WS [{ws_name}] exception: {e}")
-        WS_HEALTH[ws_name] = {"alive": False, "last_msg": time.time()}
+            WS_HEALTH[ws_name] = {
+                "alive": False,
+                "last_msg": _LAST_MESSAGE_TIME.get(ws_name, 0.0),
+                "last_error": str(e),
+                "fail_count": _WS_FAILCOUNT.get(ws_name, 0) + 1,
+                "restarts": WS_HEALTH.get(ws_name, {}).get("restarts", 0),
+            }
+
+        _WS_FAILCOUNT[ws_name] = _WS_FAILCOUNT.get(ws_name, 0) + 1
         retries += 1
         wait = min(WS_RECONNECT_DELAY_BASE * (2 ** retries), WS_MAX_RECONNECT_DELAY)
+
+        WS_HEALTH[ws_name] = {
+            "alive": False,
+            "last_msg": _LAST_MESSAGE_TIME.get(ws_name, 0.0),
+            "last_error": WS_HEALTH.get(ws_name, {}).get("last_error"),
+            "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
+            "restarts": WS_HEALTH.get(ws_name, {}).get("restarts", 0),
+        }
+
+        if _WS_FAILCOUNT[ws_name] >= WS_MAX_FAIL_COUNT_ALERT:
+            logger.warning(
+                f"⚠️ WS [{ws_name}] unstable: fail_count={_WS_FAILCOUNT[ws_name]}"
+            )
+
         logger.info(f"WS [{ws_name}] reconnecting in {wait}s (attempt {retries})...")
         time.sleep(wait)
 
