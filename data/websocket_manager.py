@@ -182,13 +182,32 @@ def _run_ws(ws_name: str, url: str) -> None:
                 on_open=lambda ws: logger.info(f"WS [{ws_name}] connected"),
             )
 
+            prev = WS_HEALTH.get(ws_name, {})
             WS_HEALTH[ws_name] = {
                 "alive": True,
                 "last_msg": _LAST_MESSAGE_TIME.get(ws_name, 0.0),
                 "last_error": None,
                 "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
-                "restarts": WS_HEALTH.get(ws_name, {}).get("restarts", 0),
+                "restarts": prev.get("restarts", 0),
             }
+
+            stop_event = threading.Event()
+            watchdog_thread = threading.Thread(
+                target=_watchdog_loop,
+                args=(ws_name, ws_app, stop_event),
+                daemon=True,
+                name=f"{ws_name}-watchdog",
+            )
+            watchdog_thread.start()
+
+            retries = 0
+            try:
+                ws_app.run_forever(
+                    sslopt={"cert_reqs": ssl.CERT_NONE},
+                    ping_interval=0,
+                )
+            finally:
+                stop_event.set()
 
             retries = 0
             ws_app.run_forever(
