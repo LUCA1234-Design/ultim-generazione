@@ -53,8 +53,11 @@ from services.notification_worker import (
 
 # ---- Notifications ----
 from notifications.telegram_service import (
-    send_message, send_photo, test_connection, build_signal_message,
-    build_startup_message, build_stats_message, notify_position_closed,
+    send_message,
+    test_connection,
+    build_startup_message,
+    build_stats_message,
+    notify_position_closed,
 )
 from notifications.chart_generator import generate_signal_chart
 
