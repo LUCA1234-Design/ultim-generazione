@@ -19,6 +19,7 @@ from engine.execution import ExecutionEngine
 from data import data_store
 from config.settings import (
     ORARI_VIETATI_UTC,
+    ORARI_MIGLIORI_UTC,
     SIGNAL_COOLDOWN_BY_TF,
     SIGNAL_COOLDOWN,
     MAX_OPEN_POSITIONS,
@@ -81,6 +82,9 @@ class EventProcessor:
 
     def _is_forbidden_hour(self) -> bool:
         return datetime.datetime.now(datetime.timezone.utc).hour in ORARI_VIETATI_UTC
+
+    def _is_optimal_hour(self) -> bool:
+        return datetime.datetime.now(datetime.timezone.utc).hour in ORARI_MIGLIORI_UTC
 
     def _is_signal_cooled(self, symbol: str, interval: str) -> bool:
         key = f"{symbol}_{interval}"
@@ -186,7 +190,20 @@ class EventProcessor:
             return None
 
         # ---- Open position ----
-        risk_meta = risk_result.metadata if risk_result else {}
+        if risk_result and risk_result.metadata:
+            risk_meta = risk_result.metadata
+        else:
+            # ATR-based fallback
+            from indicators.technical import atr as calc_atr
+            _atr_val = float(calc_atr(df, 14).iloc[-1])
+            _close = float(df["close"].iloc[-1])
+            risk_meta = {
+                "entry": _close,
+                "sl": _close - 2.0 * _atr_val if fusion_result.decision == "long" else _close + 2.0 * _atr_val,
+                "tp1": _close + 2.0 * _atr_val if fusion_result.decision == "long" else _close - 2.0 * _atr_val,
+                "tp2": _close + 4.0 * _atr_val if fusion_result.decision == "long" else _close - 4.0 * _atr_val,
+                "size": 0.001,
+            }
         sl = risk_meta.get("sl", df["close"].iloc[-1] * 0.99)
         tp1 = risk_meta.get("tp1", df["close"].iloc[-1] * 1.02)
         tp2 = risk_meta.get("tp2", df["close"].iloc[-1] * 1.04)
@@ -196,13 +213,18 @@ class EventProcessor:
 
         try:
             risk = abs(entry - sl)
-            reward = abs(tp2 - entry)
+            reward = abs(tp1 - entry)  # use TP1 to be consistent with RiskAgent
             rr = reward / risk if risk > 0 else 0.0
         except Exception:
             rr = 0.0
 
         if rr < MIN_RR:
             self._skip("low_rr")
+            return None
+
+        # Apply penalty for non-optimal trading hours: require a higher fusion score
+        if not self._is_optimal_hour() and fusion_result.final_score < MIN_FUSION_SCORE + 0.05:
+            self._skip("low_fusion_score")
             return None
 
         position = self.execution.open_position(

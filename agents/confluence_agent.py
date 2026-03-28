@@ -18,6 +18,10 @@ logger = logging.getLogger("ConfluenceAgent")
 TF_WEIGHTS = {"15m": 0.25, "1h": 0.40, "4h": 0.35}
 TF_ORDER = ["15m", "1h", "4h"]
 
+# Bidirectional evaluation constants
+_OPPOSITE_DOMINANCE_MARGIN = 0.15   # opposite direction must exceed primary by this to flip
+_OPPOSITE_SCORE_PENALTY = 0.85      # score multiplier applied when flipping direction
+
 
 class ConfluenceAgent(BaseAgent):
     """Probabilistic multi-timeframe confluence scoring."""
@@ -117,14 +121,30 @@ class ConfluenceAgent(BaseAgent):
         if df is None or len(df) < 50:
             return None
 
-        result = self.compute_confluence(symbol, interval, direction)
-        confluence = result["confluence"]
-        tf_scores = result["tf_scores"]
+        # Evaluate BOTH directions
+        result_primary = self.compute_confluence(symbol, interval, direction)
+        opposite = "short" if direction == "long" else "long"
+        result_opposite = self.compute_confluence(symbol, interval, opposite)
+
+        primary_score = result_primary["confluence"]
+        opposite_score = result_opposite["confluence"]
+
+        # If opposite direction is significantly stronger, penalize or flip
+        if opposite_score > primary_score + _OPPOSITE_DOMINANCE_MARGIN:
+            # Use opposite direction
+            final_direction = opposite
+            final_score = opposite_score * _OPPOSITE_SCORE_PENALTY  # slight penalty for disagreeing with pattern
+            tf_scores = result_opposite["tf_scores"]
+        else:
+            final_direction = direction
+            final_score = primary_score
+            tf_scores = result_primary["tf_scores"]
 
         details = [f"{tf}={v:.2f}" for tf, v in tf_scores.items()]
-        details.append(f"confluence={confluence:.2f}")
+        details.append(f"confluence={final_score:.2f}")
+        details.append(f"primary={primary_score:.2f}")
+        details.append(f"opposite={opposite_score:.2f}")
 
-        # Determine how many TFs agree
         agreeing = sum(1 for v in tf_scores.values() if v > 0.40)
         total_tfs = len(tf_scores)
 
@@ -132,9 +152,10 @@ class ConfluenceAgent(BaseAgent):
             agent_name=self.name,
             symbol=symbol,
             interval=interval,
-            score=confluence,
-            direction=direction,
+            score=final_score,
+            direction=final_direction,
             confidence=agreeing / max(total_tfs, 1),
             details=details,
-            metadata={"tf_scores": tf_scores, "agreeing_tfs": agreeing},
+            metadata={"tf_scores": tf_scores, "agreeing_tfs": agreeing,
+                      "primary_score": primary_score, "opposite_score": opposite_score},
         )
