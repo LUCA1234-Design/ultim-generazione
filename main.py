@@ -353,6 +353,9 @@ def main():
         # ---- DB init ----
         experience_db.init_db(DB_PATH)
 
+        # ---- Async workers ----
+        start_notification_worker()
+
         # ---- Telegram test ----
         if TELEGRAM_TEST_ON_START:
             test_connection()
