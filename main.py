@@ -45,6 +45,12 @@ from engine.event_processor import EventProcessor
 from memory import experience_db
 from memory.performance_tracker import PerformanceTracker
 
+# ---- Services ----
+from services.notification_worker import (
+    start_notification_worker,
+    enqueue_signal_notification,
+)
+
 # ---- Notifications ----
 from notifications.telegram_service import (
     send_message, send_photo, test_connection, build_signal_message,
