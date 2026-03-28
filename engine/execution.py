@@ -24,6 +24,11 @@ from data.binance_client import place_futures_order
 
 logger = logging.getLogger("Execution")
 
+# Maximum age per interval before a position is force-closed (in seconds)
+_MAX_POSITION_AGE = {"15m": 86400, "1h": 172800, "4h": 259200}  # 1d, 2d, 3d
+# Trailing stop ratio: fraction of TP1 distance to trail after TP1 is hit
+_TRAIL_STOP_RATIO = 0.5
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -48,6 +53,7 @@ class Position:
     pnl: Optional[float] = None
     status: str = "open"   # "open" | "closed" | "sl_hit" | "tp1_hit" | "tp2_hit"
     tp1_hit: bool = False
+    tp2_hit: bool = False
     decision_id: str = ""
     paper: bool = True
 
@@ -196,6 +202,8 @@ class ExecutionEngine:
             self._consecutive_losses += 1
 
         self._closed_positions.append(pos)
+        if len(self._closed_positions) > 1000:
+            del self._closed_positions[:100]
         emoji = "✅" if pos.pnl > 0 else "❌"
         logger.info(
             f"{emoji} {'PAPER ' if pos.paper else ''}CLOSE [{position_id}] "
@@ -218,6 +226,16 @@ class ExecutionEngine:
             if pos.symbol != symbol:
                 continue
 
+            # Check position timeout before SL/TP
+            max_age = _MAX_POSITION_AGE.get(pos.interval, 172800)
+            if time.time() - pos.open_time > max_age:
+                logger.info(
+                    f"⏰ TIMEOUT [{pos_id}] {pos.symbol}/{pos.interval} — "
+                    f"open for >{max_age}s, closing at {current_price:.4f}"
+                )
+                to_close.append((pos_id, current_price, "timeout"))
+                continue
+
             if pos.direction == "long":
                 if current_price <= pos.sl:
                     to_close.append((pos_id, current_price, "sl_hit"))
@@ -226,8 +244,16 @@ class ExecutionEngine:
                     # Move SL to entry (breakeven)
                     pos.sl = pos.entry_price
                     logger.info(f"🎯 TP1 hit [{pos_id}] {pos.symbol} — SL moved to entry")
-                elif pos.tp1_hit and current_price >= pos.tp2:
+                elif pos.tp1_hit and not pos.tp2_hit and current_price >= pos.tp2:
+                    pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
+                elif pos.tp1_hit and not pos.tp2_hit:
+                    # Trailing stop: trail at configured ratio of TP1 distance
+                    trail_distance = abs(pos.tp1 - pos.entry_price) * _TRAIL_STOP_RATIO
+                    new_sl = current_price - trail_distance
+                    if new_sl > pos.sl:
+                        pos.sl = new_sl
+                        logger.debug(f"📈 Trail SL [{pos_id}] {pos.symbol} → {new_sl:.4f}")
             else:
                 if current_price >= pos.sl:
                     to_close.append((pos_id, current_price, "sl_hit"))
@@ -235,8 +261,16 @@ class ExecutionEngine:
                     pos.tp1_hit = True
                     pos.sl = pos.entry_price
                     logger.info(f"🎯 TP1 hit [{pos_id}] {pos.symbol} — SL moved to entry")
-                elif pos.tp1_hit and current_price <= pos.tp2:
+                elif pos.tp1_hit and not pos.tp2_hit and current_price <= pos.tp2:
+                    pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
+                elif pos.tp1_hit and not pos.tp2_hit:
+                    # Trailing stop: trail at configured ratio of TP1 distance
+                    trail_distance = abs(pos.tp1 - pos.entry_price) * _TRAIL_STOP_RATIO
+                    new_sl = current_price + trail_distance
+                    if new_sl < pos.sl:
+                        pos.sl = new_sl
+                        logger.debug(f"📉 Trail SL [{pos_id}] {pos.symbol} → {new_sl:.4f}")
 
         for pos_id, price, reason in to_close:
             closed = self.close_position(pos_id, price, reason)

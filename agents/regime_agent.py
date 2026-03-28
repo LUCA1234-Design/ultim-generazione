@@ -27,10 +27,11 @@ class RegimeAgent(BaseAgent):
     def __init__(self, n_components: int = REGIME_N_COMPONENTS):
         super().__init__("regime", initial_weight=0.20)
         self.n_components = n_components
-        self._scaler = StandardScaler()
-        self._gmm: Optional[GaussianMixture] = None
-        self._regime_labels: Dict[int, str] = {}  # component_idx -> label
-        self._fitted = False
+        # Per-symbol/interval models: (symbol, interval) -> (scaler, gmm, regime_labels)
+        self._scalers: Dict[tuple, StandardScaler] = {}
+        self._gmms: Dict[tuple, GaussianMixture] = {}
+        self._regime_labels_map: Dict[tuple, Dict[int, str]] = {}
+        self._fitted_keys: set = set()
         self._feature_cache: Dict[str, np.ndarray] = {}  # key -> last features
 
     # ------------------------------------------------------------------
@@ -79,12 +80,14 @@ class RegimeAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def fit(self, symbol: str, interval: str, df: pd.DataFrame) -> bool:
-        """Fit the GMM on historical data."""
+        """Fit the GMM on historical data for a specific symbol/interval pair."""
         features = self._extract_features(df)
         if features is None:
             return False
+        key = (symbol, interval)
         try:
-            scaled = self._scaler.fit_transform(features)
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(features)
             gmm = GaussianMixture(
                 n_components=self.n_components,
                 covariance_type="full",
@@ -94,74 +97,85 @@ class RegimeAgent(BaseAgent):
             gmm.fit(scaled)
             if not hasattr(gmm, "means_"):
                 raise ValueError("GMM did not converge (means_ missing)")
-            self._gmm = gmm  # Only assign after successful fit
-            self._fitted = True
-            self._assign_regime_labels(features)
+            self._scalers[key] = scaler
+            self._gmms[key] = gmm
+            self._fitted_keys.add(key)
+            self._assign_regime_labels(key, scaler, gmm, features)
             logger.debug(f"RegimeAgent fitted on {symbol}/{interval} ({len(features)} samples)")
             return True
         except Exception as e:
-            logger.warning(f"GMM fit error: {e}")
+            logger.warning(f"GMM fit error [{symbol}/{interval}]: {e}")
             return False
 
-    def _assign_regime_labels(self, features: np.ndarray) -> None:
+    def _assign_regime_labels(self, key: tuple, scaler: StandardScaler,
+                               gmm: GaussianMixture, features: np.ndarray) -> None:
         """Assign human-readable labels to GMM components based on mean ADX & BB/KC ratio."""
-        if self._gmm is None or not hasattr(self._gmm, "means_"):
+        if not hasattr(gmm, "means_"):
             return
-        means = self._scaler.inverse_transform(self._gmm.means_)
+        means = scaler.inverse_transform(gmm.means_)
         # means columns: adx, bb_kc_ratio, zscore, rsi, vol_ratio, ema_slope
         adx_means = means[:, 0]
         bb_kc_means = means[:, 1]
         vol_means = means[:, 4]
 
         # Rank components
+        regime_labels: Dict[int, str] = {}
         sorted_by_adx = np.argsort(adx_means)[::-1]
         for rank, idx in enumerate(sorted_by_adx):
             if rank == 0:
                 # Highest ADX → trending
                 if bb_kc_means[idx] > 1.0:
-                    self._regime_labels[idx] = "volatile"
+                    regime_labels[idx] = "volatile"
                 else:
-                    self._regime_labels[idx] = "trending"
+                    regime_labels[idx] = "trending"
             elif bb_kc_means[idx] < 0.7:
-                self._regime_labels[idx] = "ranging"
+                regime_labels[idx] = "ranging"
             else:
-                self._regime_labels[idx] = "volatile"
+                regime_labels[idx] = "volatile"
 
         # Fill any unlabelled
-        used = set(self._regime_labels.values())
+        used = set(regime_labels.values())
         all_regimes = set(self.REGIMES)
         missing = list(all_regimes - used)
         for idx in range(self.n_components):
-            if idx not in self._regime_labels and missing:
-                self._regime_labels[idx] = missing.pop()
+            if idx not in regime_labels and missing:
+                regime_labels[idx] = missing.pop()
+
+        self._regime_labels_map[key] = regime_labels
 
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
 
-    def get_regime_probs(self, df: pd.DataFrame) -> Optional[Dict[str, float]]:
+    def get_regime_probs(self, symbol: str, interval: str, df: pd.DataFrame) -> Optional[Dict[str, float]]:
         """Return regime probability distribution for the latest observation."""
-        if not self._fitted or self._gmm is None:
+        key = (symbol, interval)
+        if key not in self._fitted_keys:
+            return None
+        gmm = self._gmms.get(key)
+        scaler = self._scalers.get(key)
+        regime_labels = self._regime_labels_map.get(key, {})
+        if gmm is None or scaler is None:
             return None
         features = self._extract_features(df)
         if features is None or len(features) == 0:
             return None
         try:
             last = features[-1:, :]
-            scaled = self._scaler.transform(last)
-            probs = self._gmm.predict_proba(scaled)[0]
+            scaled = scaler.transform(last)
+            probs = gmm.predict_proba(scaled)[0]
             result = {}
             for i, p in enumerate(probs):
-                label = self._regime_labels.get(i, f"regime_{i}")
+                label = regime_labels.get(i, f"regime_{i}")
                 result[label] = result.get(label, 0.0) + float(p)
             return result
         except Exception as e:
-            logger.debug(f"get_regime_probs error: {e}")
+            logger.debug(f"get_regime_probs error [{symbol}/{interval}]: {e}")
             return None
 
-    def current_regime(self, df: pd.DataFrame) -> str:
+    def current_regime(self, symbol: str, interval: str, df: pd.DataFrame) -> str:
         """Return the most probable regime label."""
-        probs = self.get_regime_probs(df)
+        probs = self.get_regime_probs(symbol, interval, df)
         if probs is None:
             return "unknown"
         return max(probs, key=probs.get)
@@ -174,10 +188,11 @@ class RegimeAgent(BaseAgent):
         if df is None or len(df) < 60:
             return None
 
-        # Fit on-the-fly if not yet fitted
-        if not self._fitted:
+        key = (symbol, interval)
+        # Fit on-the-fly if not yet fitted for this symbol/interval
+        if key not in self._fitted_keys:
             self.fit(symbol, interval, df)
-            if not self._fitted:
+            if key not in self._fitted_keys:
                 return AgentResult(
                     agent_name=self.name,
                     symbol=symbol,
@@ -188,7 +203,7 @@ class RegimeAgent(BaseAgent):
                     details=["GMM not fitted — insufficient data"],
                 )
 
-        probs = self.get_regime_probs(df)
+        probs = self.get_regime_probs(symbol, interval, df)
         if probs is None:
             return None
 

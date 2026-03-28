@@ -7,9 +7,9 @@ Multi-stream WebSocket connections to Binance Futures with:
 """
 import json
 import logging
-import ssl
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional
 
 import websocket
@@ -26,6 +26,9 @@ from config.settings import (
 )
 
 logger = logging.getLogger("WebSocketManager")
+
+# Thread pool for kline close callbacks — prevents thread explosion
+_executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="kline")
 
 # ---------------------------------------------------------------------------
 # Global WS health registry
@@ -116,12 +119,7 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
             if _LAST_KLINE_TIME.get(key) != open_time:
                 _LAST_KLINE_TIME[key] = open_time
                 if _on_kline_closed:
-                    threading.Thread(
-                        target=_on_kline_closed,
-                        args=(symbol, interval, kline),
-                        daemon=True,
-                        name=f"kline-{symbol}-{interval}",
-                    ).start()
+                    _executor.submit(_on_kline_closed, symbol, interval, kline)
     except Exception as e:
         logger.debug(f"WS message error [{ws_name}]: {e}")
 
@@ -202,8 +200,8 @@ def _run_ws(ws_name: str, url: str) -> None:
             retries = 0
             try:
                 ws_app.run_forever(
-                    sslopt={"cert_reqs": ssl.CERT_NONE},
-                    ping_interval=0,
+                    ping_interval=20,
+                    ping_timeout=15,
                 )
             finally:
                 stop_event.set()
