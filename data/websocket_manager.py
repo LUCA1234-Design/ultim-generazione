@@ -209,11 +209,6 @@ def _run_ws(ws_name: str, url: str) -> None:
             finally:
                 stop_event.set()
 
-            retries = 0
-            ws_app.run_forever(
-                sslopt={"cert_reqs": ssl.CERT_NONE},
-                ping_interval=0,
-            )
 
         except Exception as e:
             logger.error(f"WS [{ws_name}] exception: {e}")
