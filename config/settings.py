@@ -50,7 +50,7 @@ MIN_AGENT_CONFIRMATIONS = 3
 MIN_RR = 1.50
 
 WS_STALE_TIMEOUT = 25
-WS_HEALTH_LOG_INTERVAL = 300
+WS_HEALTH_LOG_INTERVAL = 120
 WS_MAX_FAIL_COUNT_ALERT = 5
 
 # ============================================================
