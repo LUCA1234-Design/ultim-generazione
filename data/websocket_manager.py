@@ -125,6 +125,42 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
     except Exception as e:
         logger.debug(f"WS message error [{ws_name}]: {e}")
 
+def _watchdog_loop(ws_name: str, ws_app, stop_event: threading.Event) -> None:
+    """Force-close stale WebSocket streams so the reconnect loop can restart them."""
+    check_interval = max(3, min(10, WS_STALE_TIMEOUT // 3 if WS_STALE_TIMEOUT else 5))
+
+    while not stop_event.is_set():
+        try:
+            time.sleep(check_interval)
+            if stop_event.is_set():
+                return
+
+            last_msg = _LAST_MESSAGE_TIME.get(ws_name, 0.0)
+            if last_msg <= 0:
+                continue
+
+            idle_for = time.time() - last_msg
+            if idle_for > WS_STALE_TIMEOUT:
+                prev = WS_HEALTH.get(ws_name, {})
+                logger.warning(
+                    f"⚠️ WS [{ws_name}] stale for {idle_for:.1f}s — forcing reconnect"
+                )
+                WS_HEALTH[ws_name] = {
+                    "alive": False,
+                    "last_msg": last_msg,
+                    "last_error": f"stale_timeout>{WS_STALE_TIMEOUT}s",
+                    "fail_count": _WS_FAILCOUNT.get(ws_name, 0),
+                    "restarts": prev.get("restarts", 0) + 1,
+                }
+                try:
+                    ws_app.close()
+                except Exception as close_err:
+                    logger.debug(f"WS [{ws_name}] watchdog close error: {close_err}")
+                return
+        except Exception as e:
+            logger.error(f"WS [{ws_name}] watchdog error: {e}")
+            return
+
 
 # ---------------------------------------------------------------------------
 # Single WebSocket runner (with exponential backoff)
