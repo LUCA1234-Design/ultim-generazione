@@ -45,8 +45,8 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.60
-MIN_AGENT_CONFIRMATIONS = 3
+MIN_FUSION_SCORE = 0.70
+MIN_AGENT_CONFIRMATIONS = 4
 MIN_RR = 1.50
 
 WS_STALE_TIMEOUT = 25
@@ -146,13 +146,13 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.55
+FUSION_THRESHOLD_DEFAULT = 0.65
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.20,
-    "pattern": 0.30,
+    "pattern": 0.25,
     "confluence": 0.25,
     "risk": 0.15,
-    "strategy": 0.10,
+    "strategy": 0.15,
 }
 
 # ============================================================

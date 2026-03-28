@@ -277,6 +277,13 @@ def _position_monitor(
                     except Exception as e:
                         logger.error(f"update_decision_outcome error: {e}")
 
+                    # After updating decision outcome, adapt the fusion threshold
+                    try:
+                        correct = (closed.pnl or 0.0) > 0
+                        processor.fusion.adapt_threshold(correct, 0.0)
+                    except Exception as e:
+                        logger.error(f"adapt_threshold error: {e}")
+
                     # Save agent outcomes in DB
                     try:
                         ctx = decision_context.get(closed.decision_id, {})
@@ -435,6 +442,7 @@ def main():
         logger.info("=" * 60)
 
         # ---- Main loop ----
+        _last_weight_adjust = time.time()
         while True:
             time.sleep(30)
             gc.collect()
@@ -443,11 +451,11 @@ def main():
             tracker.update_risk_agent_win_rates(risk_agent)
 
             # Adjust agent weights every 30 minutes
-            if int(time.time()) % 1800 < 30:
+            if time.time() - _last_weight_adjust >= 1800:
                 weight_map = meta.adjust_weights()
-                from engine.decision_fusion import DecisionFusion
                 processor.fusion.update_weights(weight_map)
                 logger.info(f"📐 Agent weights adjusted: {weight_map}")
+                _last_weight_adjust = time.time()
 
     except KeyboardInterrupt:
         logger.info("")
