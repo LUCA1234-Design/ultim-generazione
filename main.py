@@ -185,48 +185,20 @@ def build_system():
         logger.debug(f"Could not load win rates from DB: {e}")
 
     def on_signal(fusion_result, agent_results, position):
-        """Signal callback: send Telegram notification and persist decision."""
+        """Signal callback: keep fast path light and offload heavy work."""
         try:
-            msg = build_signal_message(fusion_result, agent_results, position)
-            send_message(msg)
-        except Exception as e:
-            logger.error(f"Signal notification error: {e}")
-
-        # Send candlestick chart
-        try:
-            df = data_store.get_df(fusion_result.symbol, fusion_result.interval)
-            if df is not None and len(df) > 20:
-                chart_bytes = generate_signal_chart(
-                    df=df,
-                    symbol=fusion_result.symbol,
-                    interval=fusion_result.interval,
-                    direction=fusion_result.decision,
-                    entry=position.entry_price,
-                    sl=position.sl,
-                    tp1=position.tp1,
-                    tp2=position.tp2,
-                )
-                if chart_bytes:
-                    send_photo(chart_bytes, caption=f"📊 {fusion_result.symbol} [{fusion_result.interval}]")
-        except Exception as e:
-            logger.error(f"Chart send error: {e}")
-
-        # Persist decision to DB
-        try:
-            from memory.experience_db import save_decision
-            save_decision(
-                decision_id=fusion_result.decision_id,
-                symbol=fusion_result.symbol,
-                interval=fusion_result.interval,
-                decision=fusion_result.decision,
-                final_score=fusion_result.final_score,
-                direction=fusion_result.direction,
-                threshold=fusion_result.threshold,
-                reasoning=fusion_result.reasoning,
-                agent_scores=fusion_result.agent_scores,
+            queued = enqueue_signal_notification(
+                fusion_result=fusion_result,
+                agent_results=agent_results,
+                position=position,
             )
+            if not queued:
+                logger.error(
+                    f"Failed to queue signal notification for "
+                    f"{fusion_result.symbol} [{fusion_result.interval}]"
+                )
         except Exception as e:
-            logger.error(f"DB save decision error: {e}")
+            logger.error(f"Signal enqueue error: {e}")
 
         # Save runtime context for later close handling
         try:
