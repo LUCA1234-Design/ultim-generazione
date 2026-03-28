@@ -7,7 +7,7 @@ off the realtime signal path.
 import logging
 import queue
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from data import data_store
 from memory.experience_db import save_decision
