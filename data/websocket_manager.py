@@ -192,13 +192,12 @@ def _run_ws(ws_name: str, url: str) -> None:
             }
 
             stop_event = threading.Event()
-            watchdog_thread = threading.Thread(
+            threading.Thread(
                 target=_watchdog_loop,
                 args=(ws_name, ws_app, stop_event),
                 daemon=True,
                 name=f"{ws_name}-watchdog",
-            )
-            watchdog_thread.start()
+            ).start()
 
             retries = 0
             try:
