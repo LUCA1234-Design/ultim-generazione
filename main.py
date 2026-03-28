@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 import time
-from typing import Dict, Optional, Any
+from typing import Dict, Any
 
 # ---- Config ----
 from config.settings import (
