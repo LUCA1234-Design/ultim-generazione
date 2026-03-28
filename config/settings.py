@@ -51,7 +51,7 @@ MIN_RR = 1.50
 
 WS_STALE_TIMEOUT = 60
 WS_HEALTH_LOG_INTERVAL = 120
-WS_MAX_FAIL_COUNT_ALERT = 5
+WS_MAX_FAIL_COUNT_ALERT = 20
 
 # ============================================================
 # HIDDEN GEMS (HG)
