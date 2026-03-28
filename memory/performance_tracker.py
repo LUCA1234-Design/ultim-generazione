@@ -141,9 +141,11 @@ class PerformanceTracker:
             },
         }
 
-    def update_risk_agent_win_rates(self, risk_agent) -> None:
+    def update_risk_agent_win_rates(self, risk_agent, current_balance: float = None) -> None:
         """Push real win rates from tracker into RiskAgent."""
         risk_agent.set_win_rate("global", self.global_win_rate())
+        if current_balance is not None:
+            risk_agent.update_balance(current_balance)
         for symbol, stats in self._symbol_stats.items():
             if stats["trades"] >= 5:
                 wr = stats["wins"] / stats["trades"]

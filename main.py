@@ -211,6 +211,7 @@ def build_system():
                     name: getattr(result, "direction", "")
                     for name, result in agent_results.items()
                 },
+                "agent_results": dict(agent_results),
             }
         except Exception as e:
             logger.error(f"Decision context cache error: {e}")
@@ -301,6 +302,31 @@ def _position_monitor(
                             )
                     except Exception as e:
                         logger.error(f"save_agent_outcome error: {e}")
+
+                    # Update StrategyAgent with trade outcome (Fix 4)
+                    try:
+                        strategy_name = closed.strategy
+                        if strategy_name:
+                            processor.strategy.update_strategy_outcome(
+                                strategy_name,
+                                was_profitable=(closed.pnl or 0) > 0,
+                            )
+                    except Exception as e:
+                        logger.error(f"update_strategy_outcome error: {e}")
+
+                    # Record outcome in MetaAgent for weight adjustment (Fix 8)
+                    try:
+                        ctx = decision_context.get(closed.decision_id, {})
+                        stored_agent_results = ctx.get("agent_results", {})
+                        if stored_agent_results and hasattr(processor.meta, "record_outcome"):
+                            was_correct = (closed.pnl or 0.0) > 0
+                            processor.meta.record_outcome(
+                                closed.decision_id,
+                                stored_agent_results,
+                                was_correct,
+                            )
+                    except Exception as e:
+                        logger.error(f"meta.record_outcome error: {e}")
 
                     # Clean runtime context
                     try:
@@ -448,7 +474,7 @@ def main():
             gc.collect()
 
             # Periodically update risk agent win rates from tracker
-            tracker.update_risk_agent_win_rates(risk_agent)
+            tracker.update_risk_agent_win_rates(risk_agent, current_balance=execution.get_stats()["balance"])
 
             # Adjust agent weights every 30 minutes
             if time.time() - _last_weight_adjust >= 1800:
