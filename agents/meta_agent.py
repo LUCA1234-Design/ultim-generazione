@@ -142,7 +142,16 @@ class MetaAgent(BaseAgent):
         """Return a meta-score based on current agent performance."""
         report = self.get_report()
         if not report:
-            return None
+            return AgentResult(
+                agent_name=self.name,
+                symbol=symbol,
+                interval=interval,
+                score=0.5,
+                direction="neutral",
+                confidence=0.3,
+                details=["meta:warmup_mode"],
+                metadata={},
+            )
 
         # Meta-score = average win rate across all agents
         win_rates = [v["win_rate"] for v in report.values() if v["win_rate"] is not None]

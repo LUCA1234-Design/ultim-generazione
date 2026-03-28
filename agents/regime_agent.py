@@ -219,7 +219,7 @@ class RegimeAgent(BaseAgent):
         elif regime == "volatile":
             score = 0.4 + 0.2 * volatile_prob
         else:  # ranging
-            score = 0.3 + 0.2 * ranging_prob
+            score = 0.45 + 0.2 * ranging_prob
 
         # Determine direction hint from ADX +DI/-DI
         try:

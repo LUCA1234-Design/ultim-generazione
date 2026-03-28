@@ -45,8 +45,9 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.70
-MIN_AGENT_CONFIRMATIONS = 4
+MIN_FUSION_SCORE = 0.55          # Lowered from 0.70: RegimeAgent ranging scores ~0.45-0.65 were pulling the average below threshold
+MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
+NON_OPTIMAL_HOUR_PENALTY = 0.02  # Extra fusion score required outside optimal trading hours (was 0.05)
 MIN_RR = 1.50
 
 WS_STALE_TIMEOUT = 60
@@ -75,8 +76,8 @@ HG_RS_ON = True
 HG_MIN_QUOTE_VOL = 70000
 HG_QVOL_LOOKBACK = 20
 HG_CFG = {
-    "1h": {"rvol_partial_min": 1.4, "rvol_bar_min": 1.3, "min_score": 0.65, "cooldown": HG_COOLDOWN},
-    "15m": {"rvol_partial_min": 2.3, "rvol_bar_min": 1.5, "min_score": 0.78, "cooldown": 300},
+    "1h": {"rvol_partial_min": 1.2, "rvol_bar_min": 1.2, "min_score": 0.55, "cooldown": HG_COOLDOWN},
+    "15m": {"rvol_partial_min": 1.8, "rvol_bar_min": 1.3, "min_score": 0.65, "cooldown": 300},
 }
 
 # ============================================================
