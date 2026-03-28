@@ -59,7 +59,7 @@ from notifications.telegram_service import (
     build_stats_message,
     notify_position_closed,
 )
-from notifications.chart_generator import generate_signal_chart
+
 
 # ---- Logging ----
 logging.basicConfig(
