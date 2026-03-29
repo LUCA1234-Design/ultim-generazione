@@ -44,6 +44,11 @@ _WS_URLS: Dict[str, str] = {}
 _on_kline_closed: Optional[Callable] = None
 _on_kline_update: Optional[Callable] = None
 
+# Per-WS connection state: False during disconnect / grace period, True when ready
+_IS_CONNECTED: Dict[str, bool] = {}
+_WS_CONNECT_TIME: Dict[str, float] = {}
+WS_GRACE_PERIOD = 2.0  # seconds to wait after reconnect before dispatching events
+
 
 def register_callbacks(on_closed: Callable, on_update: Callable) -> None:
     """Register callbacks for kline events."""
@@ -91,6 +96,15 @@ def _split_into_groups(symbols: List[str], group_size: int = WS_GROUP_SIZE) -> L
 
 def _handle_message(ws_name: str, raw_message: str) -> None:
     try:
+        # Skip events if disconnected or within the post-reconnect grace period.
+        # Default to False so that unknown/uninitialised streams are safe.
+        if not _IS_CONNECTED.get(ws_name, False):
+            connect_time = _WS_CONNECT_TIME.get(ws_name, 0.0)
+            if time.time() - connect_time < WS_GRACE_PERIOD:
+                logger.debug(f"WS [{ws_name}] grace period — event skipped")
+                return
+            _IS_CONNECTED[ws_name] = True  # Grace period elapsed; mark as ready
+
         data = json.loads(raw_message)
         stream_data = data.get("data", data)
         kline = stream_data.get("k")
@@ -169,15 +183,28 @@ def _run_ws(ws_name: str, url: str) -> None:
     _WS_URLS[ws_name] = url
     _init_ws_state(ws_name)
 
+    def _on_open(ws) -> None:
+        _WS_CONNECT_TIME[ws_name] = time.time()
+        _IS_CONNECTED[ws_name] = False  # Grace period starts; events held until it elapses
+        logger.info(f"WS [{ws_name}] connected")
+
+    def _on_error(ws, err) -> None:
+        _IS_CONNECTED[ws_name] = False
+        logger.warning(f"WS [{ws_name}] error: {err}")
+
+    def _on_close(ws, code, msg) -> None:
+        _IS_CONNECTED[ws_name] = False
+        logger.info(f"WS [{ws_name}] closed ({code})")
+
     while True:
         try:
             logger.info(f"WS [{ws_name}] connecting...")
             ws_app = websocket.WebSocketApp(
                 url,
                 on_message=lambda ws, msg: _handle_message(ws_name, msg),
-                on_error=lambda ws, err: logger.warning(f"WS [{ws_name}] error: {err}"),
-                on_close=lambda ws, code, msg: logger.info(f"WS [{ws_name}] closed ({code})"),
-                on_open=lambda ws: logger.info(f"WS [{ws_name}] connected"),
+                on_error=_on_error,
+                on_close=_on_close,
+                on_open=_on_open,
             )
 
             prev = WS_HEALTH.get(ws_name, {})

@@ -1,17 +1,19 @@
 """
 V17 Agentic AI Trading System — Configuration
-All settings in V16 style: os.getenv with hardcoded fallbacks.
+Secrets are loaded exclusively from environment variables (no hardcoded fallbacks).
+Copy .env.example to .env and fill in your credentials.
 """
 import os
+import sys
 
 # ============================================================
-# API CREDENTIALS
+# API CREDENTIALS  (set via environment variables — never hardcode)
 # ============================================================
 
-API_KEY = os.getenv("BINANCE_API_KEY", "v5lsKf3Ajri6DXZPkUuD8zMWCHN861vMk3fTTrDA19UnOZtKvabmJHH6x3DkpumZ")
-API_SECRET = os.getenv("BINANCE_API_SECRET", "XW0MnFlgNg40v8EvIuJQSAyo9hxWseXzKKPsnj1IrhqpAAyRsZyqBNmff7ZgMI")
-TELEGRAM_TOKEN = "8436199553:AAEJAYyl3HCbeg3hzT1m9DhYIo_WniLjyVI"
-TELEGRAM_CHAT_ID = "675648539"
+API_KEY = os.getenv("BINANCE_API_KEY", "")
+API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ============================================================
 # AI SETTINGS
@@ -163,3 +165,30 @@ FUSION_AGENT_WEIGHTS = {
 PERF_TP1_MULT = 2.0           # ATR multiplier for TP1 evaluation
 PERF_SL_MULT = 2.0            # ATR multiplier for SL evaluation
 PERF_LOOKBACK_HOURS = 24      # How far back to evaluate outcomes
+
+# ============================================================
+# RISK LOGGING
+# ============================================================
+
+RISK_LOG_COOLDOWN = 60          # Seconds between repeated risk-block log lines per symbol
+
+
+# ============================================================
+# STARTUP VALIDATION
+# ============================================================
+
+def validate_config() -> None:
+    """Exit with a clear error if any required environment variable is missing."""
+    required = {
+        "BINANCE_API_KEY": API_KEY,
+        "BINANCE_API_SECRET": API_SECRET,
+        "TELEGRAM_TOKEN": TELEGRAM_TOKEN,
+        "TELEGRAM_CHAT_ID": TELEGRAM_CHAT_ID,
+    }
+    missing = [name for name, val in required.items() if not val]
+    if missing:
+        print(
+            f"❌ Missing required environment variables: {', '.join(missing)}\n"
+            "   Copy .env.example to .env and fill in your credentials."
+        )
+        sys.exit(1)

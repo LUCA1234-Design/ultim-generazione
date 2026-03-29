@@ -16,6 +16,9 @@ venv/
 env/
 .env/
 
+# Secrets — never commit the actual .env file
+.env
+
 # Database files
 *.db
 *.db-wal
