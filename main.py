@@ -14,6 +14,7 @@ from config.settings import (
     PAPER_TRADING, ACCOUNT_BALANCE, HG_ENABLED, HG_MONITOR_ALL,
     HG_MIN_QUOTE_VOL, SYMBOLS_LIMIT, TELEGRAM_TEST_ON_START,
     STARTUP_TIMEOUT, POLL_CLOSED_ENABLE, DB_PATH,
+    validate_config,
 )
 
 # ---- Data layer ----
@@ -381,6 +382,9 @@ def main():
     logger.info(f"   - Execution: {'PAPER TRADING' if PAPER_TRADING else 'LIVE TRADING'}")
     logger.info("   - Experience DB (SQLite): ON")
     logger.info("=" * 60)
+
+    # Validate all required environment variables before doing anything else
+    validate_config()
 
     try:
         # ---- DB init ----

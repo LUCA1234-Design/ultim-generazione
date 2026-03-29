@@ -27,6 +27,7 @@ from config.settings import (
     MIN_AGENT_CONFIRMATIONS,
     MIN_RR,
     NON_OPTIMAL_HOUR_PENALTY,
+    RISK_LOG_COOLDOWN,
 )
 
 logger = logging.getLogger("EventProcessor")
@@ -76,6 +77,8 @@ class EventProcessor:
             "max_daily_loss_pct": 0,
             "max_consecutive_losses": 0,
         }
+        self._risk_block_log_times: Dict[str, float] = {}
+        self._risk_block_counts: Dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Time guards
@@ -97,6 +100,29 @@ class EventProcessor:
     
     def _skip(self, reason: str) -> None:
         self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+
+    def _log_risk_block(self, symbol: str, reason: str, details: dict) -> None:
+        """Log risk block events with per-symbol cooldown to prevent log spam."""
+        now = time.time()
+        self._risk_block_counts[symbol] = self._risk_block_counts.get(symbol, 0) + 1
+        last_log = self._risk_block_log_times.get(symbol, 0)
+
+        if now - last_log >= RISK_LOG_COOLDOWN:
+            count = self._risk_block_counts[symbol]
+            heat_pct = details.get("daily_loss_pct", 0.0)
+            heat_max = details.get("daily_loss_pct_max", 0.0)
+            logger.info(
+                f"⚠️ Risk guard active [{symbol}]: portfolio heat {heat_pct:.1f}% > {heat_max:.1f}% max "
+                f"({reason}). Blocked {count} signal(s) in last {RISK_LOG_COOLDOWN}s. "
+                "Monitoring continues."
+            )
+            self._risk_block_log_times[symbol] = now
+            self._risk_block_counts[symbol] = 0
+        else:
+            logger.debug(
+                f"⛔ {symbol} SKIP: risk_blocked reason={reason} "
+                f"(heat={details.get('daily_loss_pct', 0.0):.1f}%)"
+            )
 
     # ------------------------------------------------------------------
     # Main event handler
@@ -135,11 +161,11 @@ class EventProcessor:
             self._skip("existing_symbol_position")
             logger.debug(f"⛔ {symbol}/{interval} SKIP: existing_symbol_position")
             return None  # Already have a position on this symbol
-        risk_blocked, risk_reason = self.execution.is_risk_blocked()
+        risk_blocked, risk_reason, risk_details = self.execution.is_risk_blocked()
         if risk_blocked:
             self._skip(risk_reason)
-            logger.info(f"⛔ {symbol}/{interval} SKIP: risk_blocked reason={risk_reason}")
-            return None
+            self._log_risk_block(symbol, risk_reason, risk_details)
+            # Fall through — let agents analyse the market; only execution is blocked below
 
         df = data_store.get_df(symbol, interval)
         if df is None or len(df) < 50:
@@ -260,6 +286,14 @@ class EventProcessor:
                 f"⛔ {symbol}/{interval} SKIP: low_fusion_score (non-optimal hour) | "
                 f"agents={len(agent_results)} fusion={fusion_result.final_score:.3f} "
                 f"threshold={MIN_FUSION_SCORE + NON_OPTIMAL_HOUR_PENALTY:.3f}"
+            )
+            return None
+
+        # Guard: risk block — analysis above has run; only block actual execution
+        if risk_blocked:
+            logger.debug(
+                f"⛔ {symbol}/{interval} execution blocked by risk guard "
+                f"(signal would be: {fusion_result.decision} score={fusion_result.final_score:.3f})"
             )
             return None
 
