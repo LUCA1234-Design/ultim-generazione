@@ -253,23 +253,25 @@ class AIService:
     # Health check
     # ------------------------------------------------------------------
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self, detail: bool = False) -> Dict[str, Any]:
         """
         Report current AI service status.
 
+        Parameters
+        ----------
+        detail : bool
+            When True, includes the configured URLs and model names.
+            Keep False in production to avoid leaking infrastructure details.
+
         Returns
         -------
-        dict with scout/analyst circuit breaker states and overall metrics.
+        dict with circuit breaker states and overall metrics.
         """
-        return {
+        report: Dict[str, Any] = {
             "scout": {
-                "url": AI_URL_SCOUT,
-                "model": AI_MODEL_SCOUT,
                 "circuit_breaker": self._cb_scout.get_status(),
             },
             "analyst": {
-                "url": AI_URL_ANALYST,
-                "model": AI_MODEL_ANALYST,
                 "circuit_breaker": self._cb_analyst.get_status(),
             },
             "metrics": {
@@ -282,6 +284,12 @@ class AIService:
                 ),
             },
         }
+        if detail:
+            report["scout"]["url"] = AI_URL_SCOUT
+            report["scout"]["model"] = AI_MODEL_SCOUT
+            report["analyst"]["url"] = AI_URL_ANALYST
+            report["analyst"]["model"] = AI_MODEL_ANALYST
+        return report
 
 
 # ---------------------------------------------------------------------------

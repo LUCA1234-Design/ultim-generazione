@@ -301,7 +301,8 @@ class MetaAgent(BaseAgent):
     def save_state(self, path: str = _DEFAULT_SAVE_PATH) -> bool:
         """Serialise MetaAgent records and weights to a JSON file."""
         try:
-            os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+            dir_path = os.path.dirname(path)
+            os.makedirs(dir_path if dir_path else ".", exist_ok=True)
             state = {
                 "records": {name: rec.to_dict() for name, rec in self._records.items()},
                 "weights": {name: agent.weight for name, agent in self._agents.items()},
