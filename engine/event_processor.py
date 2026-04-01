@@ -109,6 +109,13 @@ class EventProcessor:
         """
         self._processed_count += 1
 
+        # Log skip stats every 100 candles processed
+        if self._processed_count % 100 == 0:
+            logger.info(
+                f"📊 PIPELINE STATS after {self._processed_count} candles: "
+                f"signals={self._signal_count} | skips={dict(self._skip_reasons)}"
+            )
+
         # Update realtime data
         data_store.update_realtime(symbol, interval, kline)
 

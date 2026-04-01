@@ -14,6 +14,7 @@ from config.settings import (
     PAPER_TRADING, ACCOUNT_BALANCE, HG_ENABLED, HG_MONITOR_ALL,
     HG_MIN_QUOTE_VOL, SYMBOLS_LIMIT, TELEGRAM_TEST_ON_START,
     STARTUP_TIMEOUT, POLL_CLOSED_ENABLE, DB_PATH,
+    HEARTBEAT_INTERVAL, HEARTBEAT_ENABLED,
 )
 
 # ---- Data layer ----
@@ -342,6 +343,56 @@ def _position_monitor(
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat thread
+# ---------------------------------------------------------------------------
+
+def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
+    """Send periodic heartbeat messages via Telegram so the user knows the bot is alive."""
+    start_time = time.time()
+    time.sleep(120)  # Wait 2 min before first heartbeat
+    while True:
+        try:
+            uptime_sec = time.time() - start_time
+            hours = int(uptime_sec // 3600)
+            minutes = int((uptime_sec % 3600) // 60)
+
+            stats = processor.get_stats()
+            processed = stats.get("processed", 0)
+            signals = stats.get("signals", 0)
+            skip_reasons = stats.get("skip_reasons", {})
+
+            # Build skip summary (top 5 reasons)
+            skip_sorted = sorted(skip_reasons.items(), key=lambda x: x[1], reverse=True)
+            skip_lines = "\n".join(
+                f"  • {reason}: {count}" for reason, count in skip_sorted[:5] if count > 0
+            )
+            if not skip_lines:
+                skip_lines = "  • Nessuno"
+
+            exec_stats = stats.get("execution", {})
+            open_pos = exec_stats.get("open_positions", 0)
+            balance = exec_stats.get("balance", 0)
+            risk_blocked = exec_stats.get("risk_blocked", False)
+
+            msg = (
+                f"🫀 *V17 HEARTBEAT*\n\n"
+                f"⏱ Uptime: {hours}h {minutes}m\n"
+                f"📊 Candele processate: {processed:,}\n"
+                f"📈 Segnali generati: {signals}\n"
+                f"📂 Posizioni aperte: {open_pos}\n"
+                f"💰 Balance: {balance:.2f} USDT\n"
+                f"{'🔴 RISK BLOCKED' if risk_blocked else '🟢 Risk OK'}\n\n"
+                f"🚫 *Top motivi skip:*\n{skip_lines}\n\n"
+                f"🔋 Status: *ATTIVO*"
+            )
+            send_message(msg)
+            logger.info("🫀 Heartbeat sent")
+        except Exception as e:
+            logger.error(f"Heartbeat error: {e}")
+        time.sleep(interval_sec)
+
+
+# ---------------------------------------------------------------------------
 # Periodic reporting thread
 # ---------------------------------------------------------------------------
 
@@ -455,6 +506,14 @@ def main():
             daemon=True,
             name="ReportLoop",
         ).start()
+
+        if HEARTBEAT_ENABLED:
+            threading.Thread(
+                target=_heartbeat_loop,
+                args=(processor, HEARTBEAT_INTERVAL),
+                daemon=True,
+                name="Heartbeat",
+            ).start()
 
         # ---- Send startup notification ----
         send_message(build_startup_message(
