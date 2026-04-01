@@ -45,10 +45,10 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.55          # Lowered from 0.70: RegimeAgent ranging scores ~0.45-0.65 were pulling the average below threshold
+MIN_FUSION_SCORE = 0.40          # Lowered from 0.55: safety net below fusion threshold
 MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
-NON_OPTIMAL_HOUR_PENALTY = 0.02  # Extra fusion score required outside optimal trading hours (was 0.05)
-MIN_RR = 1.50
+NON_OPTIMAL_HOUR_PENALTY = 0.01  # Extra fusion score required outside optimal trading hours (was 0.02)
+MIN_RR = 1.20                    # Lowered from 1.50: 1.5x too restrictive for futures
 
 WS_STALE_TIMEOUT = 60
 WS_HEALTH_LOG_INTERVAL = 120
@@ -119,7 +119,7 @@ POLL_CLOSED_ENABLE = True
 POLL_CLOSED_INTERVAL = 60
 STARTUP_TIMEOUT = 25
 TELEGRAM_RATE_LIMIT = 3
-TELEGRAM_TEST_ON_START = False
+TELEGRAM_TEST_ON_START = True
 
 # ============================================================
 # DATABASE
@@ -147,7 +147,7 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.65
+FUSION_THRESHOLD_DEFAULT = 0.45  # Lowered from 0.65: too restrictive, RegimeAgent ranging scores drag average below threshold
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.20,
     "pattern": 0.25,
@@ -155,6 +155,13 @@ FUSION_AGENT_WEIGHTS = {
     "risk": 0.15,
     "strategy": 0.15,
 }
+
+# ============================================================
+# HEARTBEAT
+# ============================================================
+
+HEARTBEAT_INTERVAL = 7200       # Every 2 hours (in seconds)
+HEARTBEAT_ENABLED = True
 
 # ============================================================
 # PERFORMANCE TRACKER

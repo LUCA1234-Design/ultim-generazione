@@ -76,7 +76,7 @@ class BaseAgent(abc.ABC):
         except Exception as exc:
             self._error_count += 1
             import logging
-            logging.getLogger(self._name).debug(
+            logging.getLogger(self._name).warning(
                 f"analyse error [{symbol}/{interval}]: {exc}"
             )
             return None
