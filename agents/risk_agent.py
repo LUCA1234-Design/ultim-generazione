@@ -114,9 +114,9 @@ class RiskAgent(BaseAgent):
         size = self.calc_position_size(entry, sl, win_rate, rr)
 
         # Risk score: higher R/R and win rate → higher score
-        rr_score = float(np.clip((rr - 1.0) / 3.0, 0.0, 1.0))
-        wr_score = float(np.clip((win_rate - 0.4) / 0.4, 0.0, 1.0))
-        score = 0.6 * rr_score + 0.4 * wr_score
+        rr_score = float(np.clip(rr / 3.0, 0.0, 1.0))                           # was (rr-1.0)/3.0; R/R=2 now gives 0.67 instead of 0.33
+        wr_score = float(np.clip((win_rate - 0.3) / 0.4, 0.0, 1.0))             # was (win_rate-0.4)/0.4; WR=0.55 now gives 0.625 instead of 0.375
+        score = 0.5 * rr_score + 0.5 * wr_score                                 # was 0.6/0.4, balanced 50/50
 
         details = [
             f"entry={entry:.4f}",

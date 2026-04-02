@@ -45,10 +45,10 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.40          # Lowered from 0.55: safety net below fusion threshold
+MIN_FUSION_SCORE = 0.30          # Lowered from 0.40: allow more signals through
 MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
 NON_OPTIMAL_HOUR_PENALTY = 0.01  # Extra fusion score required outside optimal trading hours (was 0.02)
-MIN_RR = 1.20                    # Lowered from 1.50: 1.5x too restrictive for futures
+MIN_RR = 1.00                    # Lowered from 1.20: R/R 1:1 acceptable for crypto futures
 
 WS_STALE_TIMEOUT = 60
 WS_HEALTH_LOG_INTERVAL = 120
@@ -103,8 +103,8 @@ BREAKOUT_RULES = {
 # TIME FILTERS
 # ============================================================
 
-ORARI_VIETATI_UTC = list(range(2, 6))
-ORARI_MIGLIORI_UTC = list(range(8, 16)) + list(range(20, 24))
+ORARI_VIETATI_UTC = [3, 4]  # Only the 2 deadest hours (3:00-4:59 UTC = 5:00-6:59 AM Italy)
+ORARI_MIGLIORI_UTC = list(range(7, 17)) + list(range(19, 24)) + [0, 1]  # Expanded, added 0, 1, 7
 
 # ============================================================
 # DATA SETTINGS
@@ -147,7 +147,7 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.45  # Lowered from 0.65: too restrictive, RegimeAgent ranging scores drag average below threshold
+FUSION_THRESHOLD_DEFAULT = 0.35  # Lowered from 0.45: agents produce low average scores, 0.35 allows real signals through
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.20,
     "pattern": 0.25,

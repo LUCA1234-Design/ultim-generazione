@@ -57,22 +57,22 @@ class ConfluenceAgent(BaseAgent):
 
             score = 0.0
             if direction == "long":
-                if rsi_val < 50: score += 0.15
-                if rsi_val < 35: score += 0.10
+                if rsi_val < 55: score += 0.15       # was < 50
+                if rsi_val < 40: score += 0.10       # was < 35
                 if last_di_p > last_di_m: score += 0.10
                 if last_hist > 0 and prev_hist < 0: score += 0.15
-                elif last_hist > 0: score += 0.05
-                if last_close < bb_lo.iloc[-1] * 1.005: score += 0.15
+                elif last_hist > 0: score += 0.08    # was 0.05
+                if last_close < bb_lo.iloc[-1] * 1.01: score += 0.15   # was * 1.005
                 if obv_slope > 0: score += 0.10
                 if last_delta > 0: score += 0.10
                 if sweep == 1: score += 0.20  # bullish liquidity sweep
             else:
-                if rsi_val > 50: score += 0.15
-                if rsi_val > 65: score += 0.10
+                if rsi_val > 45: score += 0.15       # was > 50
+                if rsi_val > 60: score += 0.10       # was > 65
                 if last_di_m > last_di_p: score += 0.10
                 if last_hist < 0 and prev_hist > 0: score += 0.15
-                elif last_hist < 0: score += 0.05
-                if last_close > bb_up.iloc[-1] * 0.995: score += 0.15
+                elif last_hist < 0: score += 0.08    # was 0.05
+                if last_close > bb_up.iloc[-1] * 0.99: score += 0.15   # was * 0.995
                 if obv_slope < 0: score += 0.10
                 if last_delta < 0: score += 0.10
                 if sweep == -1: score += 0.20  # bearish liquidity sweep

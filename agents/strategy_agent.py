@@ -87,13 +87,17 @@ class StrategyAgent(BaseAgent):
             if last_adx >= params.get("adx_min", 15):
                 conditions_met += 1
 
-            # MACD cross
+            # MACD cross OR momentum
             if params.get("macd_cross", False):
                 total_conditions += 1
                 if direction == "long" and last_hist > 0 and prev_hist <= 0:
-                    conditions_met += 1
+                    conditions_met += 1          # Perfect cross
+                elif direction == "long" and last_hist > prev_hist and last_hist > 0:
+                    conditions_met += 0.7        # Momentum: MACD hist rising and positive
                 elif direction == "short" and last_hist < 0 and prev_hist >= 0:
-                    conditions_met += 1
+                    conditions_met += 1          # Perfect cross
+                elif direction == "short" and last_hist < prev_hist and last_hist < 0:
+                    conditions_met += 0.7        # Momentum: MACD hist falling and negative
 
             # Volume multiplier
             total_conditions += 1

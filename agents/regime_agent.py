@@ -215,11 +215,11 @@ class RegimeAgent(BaseAgent):
 
         # Score: trending regime is most favourable for directional trades
         if regime == "trending":
-            score = 0.7 + 0.3 * trending_prob
+            score = 0.75 + 0.25 * trending_prob   # was 0.7 + 0.3
         elif regime == "volatile":
-            score = 0.4 + 0.2 * volatile_prob
+            score = 0.55 + 0.20 * volatile_prob    # was 0.4 + 0.2
         else:  # ranging
-            score = 0.45 + 0.2 * ranging_prob
+            score = 0.50 + 0.25 * ranging_prob     # was 0.45 + 0.2 — raised base
 
         # Determine direction hint from ADX +DI/-DI
         try:
