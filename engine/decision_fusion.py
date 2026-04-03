@@ -192,6 +192,12 @@ class DecisionFusion:
                 f"🎯 DECISION [{decision_id}] {symbol}/{interval}: {decision.upper()} "
                 f"(score={final_score:.3f} ≥ {self._threshold:.3f})"
             )
+        elif final_score >= self._threshold * 0.7:
+            logger.info(
+                f"📊 NEAR-MISS [{decision_id}] {symbol}/{interval}: "
+                f"score={final_score:.3f} < {self._threshold:.3f} "
+                f"(agents: {agent_scores})"
+            )
         else:
             logger.debug(
                 f"HOLD [{decision_id}] {symbol}/{interval}: "
