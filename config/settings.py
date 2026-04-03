@@ -45,7 +45,7 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.30          # Lowered from 0.40: allow more signals through
+MIN_FUSION_SCORE = 0.25          # Lowered from 0.30: real quality filter is the fusion threshold + R/R gate
 MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
 NON_OPTIMAL_HOUR_PENALTY = 0.01  # Extra fusion score required outside optimal trading hours (was 0.02)
 MIN_RR = 1.00                    # Lowered from 1.20: R/R 1:1 acceptable for crypto futures
@@ -147,13 +147,14 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.35  # Lowered from 0.45: agents produce low average scores, 0.35 allows real signals through
+FUSION_THRESHOLD_DEFAULT = 0.30  # Lowered from 0.35: with meta weight fix, agents average ~0.40-0.55 so 0.30 is safety net
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.20,
-    "pattern": 0.25,
+    "pattern": 0.30,       # was 0.25 — pattern detection is the core signal source
     "confluence": 0.25,
     "risk": 0.15,
     "strategy": 0.15,
+    "meta": 0.05,           # ADDED — prevents default weight of 1.0 from dominating fusion
 }
 
 # ============================================================

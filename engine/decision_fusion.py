@@ -193,10 +193,18 @@ class DecisionFusion:
                 f"(score={final_score:.3f} ≥ {self._threshold:.3f})"
             )
         else:
-            logger.debug(
-                f"HOLD [{decision_id}] {symbol}/{interval}: "
-                f"score={final_score:.3f} < {self._threshold:.3f}"
-            )
+            # Log near-miss decisions at INFO level for debugging
+            if final_score >= self._threshold * 0.70:
+                logger.info(
+                    f"📊 NEAR-MISS [{decision_id}] {symbol}/{interval}: "
+                    f"score={final_score:.3f} < {self._threshold:.3f} "
+                    f"(gap={self._threshold - final_score:.3f}) agents={agent_scores}"
+                )
+            else:
+                logger.debug(
+                    f"HOLD [{decision_id}] {symbol}/{interval}: "
+                    f"score={final_score:.3f} < {self._threshold:.3f}"
+                )
 
         return result
 

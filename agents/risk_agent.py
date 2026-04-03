@@ -69,9 +69,9 @@ class RiskAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def calc_levels(self, df: pd.DataFrame, direction: str,
-                    atr_sl_mult: float = 2.0,
-                    atr_tp1_mult: float = 2.0,
-                    atr_tp2_mult: float = 4.0) -> Tuple[float, float, float, float]:
+                    atr_sl_mult: float = 1.5,       # was 2.0 — tighter SL
+                    atr_tp1_mult: float = 2.5,      # was 2.0 — wider TP1, gives R/R = 2.5/1.5 = 1.67
+                    atr_tp2_mult: float = 5.0) -> Tuple[float, float, float, float]:
         """Compute SL, TP1, TP2 from ATR, and return (sl, tp1, tp2, rr)."""
         _atr = atr(df, 14).iloc[-1]
         close = df["close"].iloc[-1]
