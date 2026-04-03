@@ -207,12 +207,26 @@ class PatternAgent(BaseAgent):
         score = 0.0
         details = []
 
-        rsi_val = rsi(df["close"], 14).iloc[-1]
+        rsi_val = float(rsi(df["close"], 14).iloc[-1])
         adx_val, di_p, di_m = adx(df, 14)
         last_adx = adx_val.iloc[-1]
         last_di_p = di_p.iloc[-1]
         last_di_m = di_m.iloc[-1]
         vol_r = volume_ratio(df, 20).iloc[-1]
+
+        # BASE SCORE: general market conditions (ensures non-zero score on normal candles)
+        di_spread = abs(float(last_di_p) - float(last_di_m))
+        if di_spread > 5:
+            score += 0.10
+            details.append(f"DI_spread({di_spread:.1f})")
+
+        if vol_r >= 1.0:
+            score += 0.05
+            details.append(f"vol_ok({vol_r:.1f}x)")
+
+        if rsi_val < 40 or rsi_val > 60:
+            score += 0.05
+            details.append(f"RSI_active({rsi_val:.0f})")
 
         # Squeeze (immediate)
         sq_active, sq_bars = self.detect_squeeze(df)

@@ -45,7 +45,7 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.30          # Lowered from 0.40: allow more signals through
+MIN_FUSION_SCORE = 0.25          # Lowered from 0.30: allow more signals through
 MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
 NON_OPTIMAL_HOUR_PENALTY = 0.01  # Extra fusion score required outside optimal trading hours (was 0.02)
 MIN_RR = 1.00                    # Lowered from 1.20: R/R 1:1 acceptable for crypto futures
@@ -103,7 +103,7 @@ BREAKOUT_RULES = {
 # TIME FILTERS
 # ============================================================
 
-ORARI_VIETATI_UTC = [3, 4]  # Only the 2 deadest hours (3:00-4:59 UTC = 5:00-6:59 AM Italy)
+ORARI_VIETATI_UTC = []  # Crypto is 24/7 — no forbidden hours
 ORARI_MIGLIORI_UTC = list(range(7, 17)) + list(range(19, 24)) + [0, 1]  # Expanded, added 0, 1, 7
 
 # ============================================================
@@ -147,13 +147,14 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.35  # Lowered from 0.45: agents produce low average scores, 0.35 allows real signals through
+FUSION_THRESHOLD_DEFAULT = 0.30  # Lowered from 0.35: allows real signals through
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.20,
-    "pattern": 0.25,
+    "pattern": 0.30,      # raised from 0.25 — pattern detection is the core of the bot
     "confluence": 0.25,
     "risk": 0.15,
     "strategy": 0.15,
+    "meta": 0.05,          # added — prevents default weight of 1.0 from dominating the average
 }
 
 # ============================================================
