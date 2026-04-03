@@ -214,6 +214,20 @@ class PatternAgent(BaseAgent):
         last_di_m = di_m.iloc[-1]
         vol_r = volume_ratio(df, 20).iloc[-1]
 
+        # ---- BASE SCORE: general market conditions (ensures non-zero score) ----
+        di_spread = abs(float(last_di_p) - float(last_di_m))
+        if di_spread > 5:
+            score += 0.10
+            details.append(f"DI_spread({di_spread:.1f})")
+
+        if float(vol_r) >= 1.0:
+            score += 0.05
+            details.append(f"vol_ok({float(vol_r):.1f}x)")
+
+        if float(rsi_val) < 40 or float(rsi_val) > 60:
+            score += 0.05
+            details.append(f"RSI_active({float(rsi_val):.0f})")
+
         # Squeeze (immediate)
         sq_active, sq_bars = self.detect_squeeze(df)
         if sq_active and sq_bars >= HG_SQUEEZE_MIN_BARS:
