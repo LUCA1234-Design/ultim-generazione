@@ -90,8 +90,12 @@ def build_signal_message(
     from config.settings import ORARI_MIGLIORI_UTC
     time_quality = "🟢" if hour in ORARI_MIGLIORI_UTC else "🟡"
 
+    # Extract R/R for title line
+    risk_result = agent_results.get("risk")
+    rr = risk_result.metadata.get("rr", 0) if risk_result else 0
+
     lines = [
-        f"{dir_emoji} *{symbol}* [{interval}] — *{direction.upper()}*",
+        f"{dir_emoji} *{symbol}* [{interval}] — *{direction.upper()}* (R/R {rr:.1f}x)",
         "",
         f"💰 Entry: `{position.entry_price:.4f}`",
         f"🛑 SL: `{position.sl:.4f}`",
@@ -102,6 +106,38 @@ def build_signal_message(
         "",
     ]
 
+    # Signal type badges
+    pattern_result = agent_results.get("pattern")
+    badges: List[str] = []
+    if pattern_result and pattern_result.details:
+        details_joined = " ".join(pattern_result.details)
+        if "squeeze_breakout" in details_joined:
+            badges.append("💥 SQUEEZE BREAKOUT")
+        if "rsi_div_bullish" in details_joined or "rsi_div_bearish" in details_joined:
+            badges.append("📊 RSI DIVERGENCE")
+        if "RS_leader" in details_joined:
+            badges.append("💎 RS LEADER")
+        if "breakout_long" in details_joined or "breakout_short" in details_joined:
+            badges.append("🚀 BREAKOUT")
+        if "NR7" in details_joined:
+            badges.append("📐 NR7")
+        if "hammer_bullish" in details_joined:
+            badges.append("🕯️ hammer_bullish")
+        if "shooting_star_bearish" in details_joined:
+            badges.append("🌠 shooting_star_bearish")
+    if badges:
+        lines.append(f"🏷️ {' | '.join(badges)}")
+
+    # Agent agreement count
+    fusion_direction = fusion.direction or "neutral"
+    total_agents = len(agent_results)
+    agreeing = sum(
+        1 for r in agent_results.values()
+        if r is not None and r.direction == fusion_direction
+    )
+    lines.append(f"🤝 Agents: {agreeing}/{total_agents} agree on {fusion_direction}")
+    lines.append("")
+
     # Regime section
     regime_result = agent_results.get("regime")
     if regime_result:
@@ -111,7 +147,6 @@ def build_signal_message(
         lines.append(f"🌡️ Regime: *{regime}* ({prob_str})")
 
     # Pattern section
-    pattern_result = agent_results.get("pattern")
     if pattern_result and pattern_result.details:
         lines.append(f"🧩 Patterns: {', '.join(pattern_result.details[:4])}")
         lines.append(f"   RSI={pattern_result.metadata.get('rsi', 0):.1f} "
@@ -125,10 +160,8 @@ def build_signal_message(
         lines.append(f"🔗 Confluence: {tf_str}")
 
     # Risk section
-    risk_result = agent_results.get("risk")
     if risk_result:
         meta = risk_result.metadata
-        rr = meta.get("rr", 0)
         kelly = meta.get("kelly", 0)
         win_rate = meta.get("win_rate", 0)
         lines.append(f"⚖️ R/R: `{rr:.2f}x` | Kelly: `{kelly*100:.1f}%` | WR: `{win_rate:.0%}`")
@@ -140,6 +173,40 @@ def build_signal_message(
         lines.append(f"🎲 Strategy: `{strat}`")
 
     lines.append(f"\n{time_quality} UTC {hour:02d}:xx | ID: `{fusion.decision_id}`")
+    return "\n".join(lines)
+
+
+def build_heartbeat_message(uptime_hours: int, uptime_minutes: int,
+                            processed: int, signals: int,
+                            open_positions: int, balance: float,
+                            risk_blocked: bool,
+                            skip_reasons: dict,
+                            fusion_threshold: float = 0.0,
+                            last_signal_info: str = "") -> str:
+    """Build the periodic heartbeat message string."""
+    skip_sorted = sorted(skip_reasons.items(), key=lambda x: x[1], reverse=True)
+    skip_lines = "\n".join(
+        f"  • {reason}: {count}" for reason, count in skip_sorted[:5] if count > 0
+    )
+    if not skip_lines:
+        skip_lines = "  • Nessuno"
+
+    lines = [
+        f"🫀 *V17 HEARTBEAT*\n",
+        f"⏱ Uptime: {uptime_hours}h {uptime_minutes}m",
+        f"📊 Candele processate: {processed:,}",
+        f"📈 Segnali generati: {signals}",
+        f"📂 Posizioni aperte: {open_positions}",
+        f"💰 Balance: {balance:.2f} USDT",
+        f"📏 Fusion threshold: {fusion_threshold:.3f}",
+        f"{'🔴 RISK BLOCKED' if risk_blocked else '🟢 Risk OK'}",
+        "",
+        f"🚫 *Top motivi skip:*\n{skip_lines}",
+    ]
+    if last_signal_info:
+        lines.append(f"📡 Ultimo segnale: {last_signal_info}")
+    lines.append("")
+    lines.append("🔋 Status: *ATTIVO*")
     return "\n".join(lines)
 
 

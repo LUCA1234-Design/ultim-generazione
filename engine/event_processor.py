@@ -60,6 +60,7 @@ class EventProcessor:
         self._last_signal_time: Dict[str, float] = {}
         self._processed_count = 0
         self._signal_count = 0
+        self._last_signal_info: str = ""
         self._skip_reasons: Dict[str, int] = {
             "forbidden_hour": 0,
             "cooldown": 0,
@@ -286,6 +287,13 @@ class EventProcessor:
         if position:
             self._mark_signal(symbol, interval)
             self._signal_count += 1
+            self._last_signal_info = f"{symbol} {interval} {fusion_result.decision}"
+
+            # Attach signal tags from pattern details
+            signal_tags: list = []
+            if pattern_result and pattern_result.details:
+                signal_tags = list(pattern_result.details)
+            fusion_result.signal_tags = signal_tags
 
             # Notify via callback
             if self.on_signal:
@@ -306,4 +314,6 @@ class EventProcessor:
                "signals": self._signal_count,
                "skip_reasons": dict(self._skip_reasons),
                "execution": self.execution.get_stats(),
+               "last_signal": self._last_signal_info,
+               "fusion_threshold": self.fusion._threshold,
         } 

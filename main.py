@@ -58,6 +58,7 @@ from notifications.telegram_service import (
     test_connection,
     build_startup_message,
     build_stats_message,
+    build_heartbeat_message,
     notify_position_closed,
 )
 
@@ -348,8 +349,11 @@ def _position_monitor(
 
 def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
     """Send periodic heartbeat messages via Telegram so the user knows the bot is alive."""
+    import traceback
+    logger.info("🫀 Heartbeat thread started, first beat in 120s")
     start_time = time.time()
     time.sleep(120)  # Wait 2 min before first heartbeat
+    consecutive_errors = 0
     while True:
         try:
             uptime_sec = time.time() - start_time
@@ -360,35 +364,36 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
             processed = stats.get("processed", 0)
             signals = stats.get("signals", 0)
             skip_reasons = stats.get("skip_reasons", {})
-
-            # Build skip summary (top 5 reasons)
-            skip_sorted = sorted(skip_reasons.items(), key=lambda x: x[1], reverse=True)
-            skip_lines = "\n".join(
-                f"  • {reason}: {count}" for reason, count in skip_sorted[:5] if count > 0
-            )
-            if not skip_lines:
-                skip_lines = "  • Nessuno"
-
             exec_stats = stats.get("execution", {})
             open_pos = exec_stats.get("open_positions", 0)
-            balance = exec_stats.get("balance", 0)
+            balance = exec_stats.get("balance") or 0
             risk_blocked = exec_stats.get("risk_blocked", False)
+            fusion_threshold = stats.get("fusion_threshold", 0.0)
+            last_signal_info = stats.get("last_signal", "")
 
-            msg = (
-                f"🫀 *V17 HEARTBEAT*\n\n"
-                f"⏱ Uptime: {hours}h {minutes}m\n"
-                f"📊 Candele processate: {processed:,}\n"
-                f"📈 Segnali generati: {signals}\n"
-                f"📂 Posizioni aperte: {open_pos}\n"
-                f"💰 Balance: {balance:.2f} USDT\n"
-                f"{'🔴 RISK BLOCKED' if risk_blocked else '🟢 Risk OK'}\n\n"
-                f"🚫 *Top motivi skip:*\n{skip_lines}\n\n"
-                f"🔋 Status: *ATTIVO*"
+            msg = build_heartbeat_message(
+                uptime_hours=hours,
+                uptime_minutes=minutes,
+                processed=processed,
+                signals=signals,
+                open_positions=open_pos,
+                balance=balance,
+                risk_blocked=risk_blocked,
+                skip_reasons=skip_reasons,
+                fusion_threshold=fusion_threshold,
+                last_signal_info=last_signal_info,
             )
             send_message(msg)
             logger.info("🫀 Heartbeat sent")
+            consecutive_errors = 0
         except Exception as e:
-            logger.error(f"Heartbeat error: {e}")
+            consecutive_errors += 1
+            logger.error(f"Heartbeat error: {e}\n{traceback.format_exc()}")
+            if consecutive_errors >= 3:
+                try:
+                    send_message("🔴 V17 HEARTBEAT — system alive but stats unavailable")
+                except Exception:
+                    pass
         time.sleep(interval_sec)
 
 
@@ -399,7 +404,10 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
 def _report_loop(processor: EventProcessor, tracker: PerformanceTracker,
                   meta: MetaAgent, interval_sec: int = 3600) -> None:
     """Send periodic performance reports via Telegram."""
+    import traceback
+    logger.info("📊 Report thread started, first report in 60s")
     time.sleep(60)  # Give system time to start
+    consecutive_errors = 0
     while True:
         try:
             exec_stats = processor.execution.get_stats()
@@ -408,8 +416,15 @@ def _report_loop(processor: EventProcessor, tracker: PerformanceTracker,
             msg = build_stats_message(exec_stats, perf_summary, agent_report)
             send_message(msg)
             logger.info("📊 Periodic report sent")
+            consecutive_errors = 0
         except Exception as e:
-            logger.error(f"_report_loop error: {e}")
+            consecutive_errors += 1
+            logger.error(f"_report_loop error: {e}\n{traceback.format_exc()}")
+            if consecutive_errors >= 3:
+                try:
+                    send_message("🔴 V17 REPORT — system alive but report unavailable")
+                except Exception:
+                    pass
         time.sleep(interval_sec)
 
 
