@@ -366,7 +366,7 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
             skip_reasons = stats.get("skip_reasons", {})
             exec_stats = stats.get("execution", {})
             open_pos = exec_stats.get("open_positions", 0)
-            balance = exec_stats.get("balance", 0) or 0
+            balance = exec_stats.get("balance") or 0
             risk_blocked = exec_stats.get("risk_blocked", False)
             fusion_threshold = stats.get("fusion_threshold", 0.0)
             last_signal_info = stats.get("last_signal", "")

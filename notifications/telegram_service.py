@@ -129,7 +129,7 @@ def build_signal_message(
         lines.append(f"🏷️ {' | '.join(badges)}")
 
     # Agent agreement count
-    fusion_direction = fusion.direction
+    fusion_direction = fusion.direction or "neutral"
     total_agents = len(agent_results)
     agreeing = sum(
         1 for r in agent_results.values()
