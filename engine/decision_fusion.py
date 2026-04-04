@@ -39,6 +39,7 @@ class FusionResult:
         self.threshold = threshold
         self.reasoning = reasoning
         self.timestamp = time.time()
+        self.signal_tags: list = []
 
     def should_trade(self) -> bool:
         return self.decision in (DECISION_LONG, DECISION_SHORT)
@@ -61,6 +62,7 @@ class FusionResult:
             "threshold": self.threshold,
             "reasoning": self.reasoning,
             "timestamp": self.timestamp,
+            "signal_tags": self.signal_tags,
         }
 
 
