@@ -7,6 +7,7 @@ off the realtime signal path.
 import logging
 import queue
 import threading
+import traceback
 from typing import Any, Dict
 
 from data import data_store
@@ -76,7 +77,7 @@ def _process_signal_job(job: Dict[str, Any]) -> None:
                     caption=f"📊 {fusion_result.symbol} [{fusion_result.interval}]",
                 )
     except Exception as e:
-        logger.error(f"Chart send error: {e}")
+        logger.error(f"Chart send error: {e}\n{traceback.format_exc()}")
 
     # 3. Save decision
     try:
@@ -105,7 +106,7 @@ def _worker_loop() -> None:
             finally:
                 _signal_queue.task_done()
         except Exception as e:
-            logger.error(f"Notification worker loop error: {e}")
+            logger.error(f"Notification worker loop error: {e}\n{traceback.format_exc()}")
 
 
 def start_notification_worker() -> None:

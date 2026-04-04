@@ -6,6 +6,8 @@ import io
 import logging
 from typing import Optional
 
+import matplotlib
+matplotlib.use("Agg")  # Non-GUI backend, thread-safe — MUST be before any other matplotlib import
 import matplotlib.pyplot as plt
 import pandas as pd
 import mplfinance as mpf
@@ -80,7 +82,7 @@ def generate_signal_chart(
             return None
 
         # Colors
-        dir_emoji = "LONG 📈" if direction == "long" else "SHORT 📉"
+        dir_emoji = "LONG" if direction == "long" else "SHORT"
         entry_color = "#2196F3"  # blue
         sl_color = "#F44336"     # red
         tp1_color = "#4CAF50"    # green
@@ -157,4 +159,8 @@ def generate_signal_chart(
 
     except Exception as e:
         logger.error(f"Chart generation error: {e}")
+        try:
+            plt.close("all")
+        except Exception:
+            pass
         return None
