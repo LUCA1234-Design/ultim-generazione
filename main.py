@@ -163,7 +163,19 @@ def preload_historical(symbols, label: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def build_system():
-    """Instantiate and wire all V17 components."""
+    """Instantiate and wire all V17 components.
+
+    Returns
+    -------
+    processor        : EventProcessor
+    meta             : MetaAgent
+    tracker          : PerformanceTracker
+    execution        : ExecutionEngine
+    risk             : RiskAgent
+    strategy         : StrategyAgent
+    confluence       : ConfluenceAgent
+    decision_context : Dict[str, Dict[str, Any]] — runtime signal context cache
+    """
     logger.info("🔧 Building V17 agent system...")
 
     pattern = PatternAgent()
@@ -244,7 +256,7 @@ def build_system():
 def _position_monitor(
     processor: EventProcessor,
     tracker: PerformanceTracker,
-    decision_context: Dict[str, Any],
+    decision_context: Dict[str, Dict[str, Any]],
     interval_sec: int = 10,
     evolution_engine: Optional["EvolutionEngine"] = None,
 ) -> None:

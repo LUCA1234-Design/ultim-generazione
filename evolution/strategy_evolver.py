@@ -37,7 +37,9 @@ class StrategyEvolver:
 
         Parameters
         ----------
-        strategy_name  : name of the strategy that generated the signal
+        strategy_name  : name of the strategy that generated the signal.
+                         Accepted for API symmetry; per-strategy win-rate
+                         tracking is handled by StrategyAgent internally.
         was_profitable : whether the trade closed with positive P&L
         """
         self._trade_count += 1

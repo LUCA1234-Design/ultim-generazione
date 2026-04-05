@@ -25,6 +25,10 @@ _MIN_SAMPLES = 5          # minimum active samples per TF before adapting
 _TF_WEIGHT_MIN = 0.10
 _TF_WEIGHT_MAX = 0.70
 _ADAPT_ALPHA = 0.20       # EMA blend: new_weight = (1-alpha)*old + alpha*computed
+# Weight formula: target = WR * _WR_SCALE_FACTOR + _WR_BASELINE
+# A 50 % win-rate TF gets weight 0.50, a 100 % TF gets 0.90 (capped at _TF_WEIGHT_MAX)
+_WR_SCALE_FACTOR = 0.80
+_WR_BASELINE = 0.10
 
 
 class ConfluenceAdapter:
@@ -63,9 +67,12 @@ class ConfluenceAdapter:
             if total < _MIN_SAMPLES:
                 return   # not enough data for at least one TF — skip
             wr = self._tf_wins[tf] / total
-            # EMA blend between old weight and win-rate-derived target
+            # EMA blend between old weight and win-rate-derived target.
+            # target = WR * _WR_SCALE_FACTOR + _WR_BASELINE so that:
+            #   WR=0.50 → target=0.50, WR=1.00 → target=0.90 (capped at max)
             old_weight = self._confluence._tf_weights.get(tf, 1.0 / len(_TF_ORDER))
-            target = float(np.clip(wr * 0.80 + 0.10, _TF_WEIGHT_MIN, _TF_WEIGHT_MAX))
+            target = float(np.clip(wr * _WR_SCALE_FACTOR + _WR_BASELINE,
+                                   _TF_WEIGHT_MIN, _TF_WEIGHT_MAX))
             blended = float(np.clip(
                 (1.0 - _ADAPT_ALPHA) * old_weight + _ADAPT_ALPHA * target,
                 _TF_WEIGHT_MIN, _TF_WEIGHT_MAX,

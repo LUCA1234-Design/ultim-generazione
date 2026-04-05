@@ -37,9 +37,11 @@ class ConfluenceAgent(BaseAgent):
         Values are clipped to [0.05, 0.70] and normalised to sum to 1.0 so the
         weighted average in ``compute_confluence()`` remains well-behaved.
         """
-        import numpy as _np
-        cleaned = {tf: float(_np.clip(new_weights.get(tf, self._tf_weights.get(tf, 0.33)), 0.05, 0.70))
-                   for tf in TF_ORDER}
+        _default_weight = 1.0 / len(TF_ORDER)
+        cleaned = {}
+        for tf in TF_ORDER:
+            raw = new_weights.get(tf, self._tf_weights.get(tf, _default_weight))
+            cleaned[tf] = float(np.clip(float(raw), 0.05, 0.70))
         total = sum(cleaned.values())
         if total > 0:
             self._tf_weights = {tf: cleaned[tf] / total for tf in TF_ORDER}
