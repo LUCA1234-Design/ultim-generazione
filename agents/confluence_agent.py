@@ -29,7 +29,7 @@ class ConfluenceAgent(BaseAgent):
     def __init__(self):
         super().__init__("confluence", initial_weight=0.25)
         # Instance-level TF weights so the evolution engine can adapt them at runtime
-        self._tf_weights: dict = dict(TF_WEIGHTS)
+        self._tf_weights: Dict[str, float] = dict(TF_WEIGHTS)
 
     def update_tf_weights(self, new_weights: dict) -> None:
         """Update per-timeframe weights used in confluence scoring.

@@ -214,25 +214,21 @@ class EvolutionEngine:
             wins = sum(1 for d in completed if (d.get("pnl") or 0) > 0)
             win_rate = wins / len(completed)
             current = self._fusion._threshold
+            # Default: no change
+            new_threshold = current
 
             if win_rate < _THRESHOLD_LOW_WR:
                 new_threshold = float(np.clip(current + _THRESHOLD_STEP_UP,
                                               _THRESHOLD_MIN, _THRESHOLD_MAX))
-                if new_threshold != current:
-                    logger.info(
-                        f"🔧 Auto-tune: win_rate={win_rate:.1%} (low) → "
-                        f"threshold {current:.3f} → {new_threshold:.3f}"
-                    )
             elif win_rate > _THRESHOLD_HIGH_WR:
                 new_threshold = float(np.clip(current - _THRESHOLD_STEP_DOWN,
                                               _THRESHOLD_MIN, _THRESHOLD_MAX))
-                if new_threshold != current:
-                    logger.info(
-                        f"🔧 Auto-tune: win_rate={win_rate:.1%} (high) → "
-                        f"threshold {current:.3f} → {new_threshold:.3f}"
-                    )
-            else:
-                new_threshold = current
+
+            if new_threshold != current:
+                logger.info(
+                    f"🔧 Auto-tune: win_rate={win_rate:.1%} → "
+                    f"threshold {current:.3f} → {new_threshold:.3f}"
+                )
 
             self._fusion._threshold = new_threshold
             experience_db.save_param("fusion_threshold", new_threshold, "auto_tune")

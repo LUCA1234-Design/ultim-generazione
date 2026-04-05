@@ -558,8 +558,11 @@ def main():
 
         # ---- Background threads ----
         threading.Thread(
-            target=_position_monitor,
-            args=(processor, tracker, decision_context, 10, evolution_engine),
+            target=lambda: _position_monitor(
+                processor, tracker, decision_context,
+                interval_sec=10,
+                evolution_engine=evolution_engine,
+            ),
             daemon=True,
             name="PositionMonitor",
         ).start()

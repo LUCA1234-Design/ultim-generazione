@@ -60,17 +60,24 @@ class ConfluenceAdapter:
                     self._tf_wins[tf] += 1
 
     def maybe_adapt(self) -> None:
-        """Rebalance TF weights if we have enough data for all timeframes."""
+        """Rebalance TF weights based on per-TF win rates.
+
+        Only timeframes with enough samples are included; the rest retain
+        their current weights. Normalisation is applied across all TFs so
+        the adapted weights always sum to 1.0.
+        """
+        current_weights = dict(self._confluence._tf_weights)
         new_weights: Dict[str, float] = {}
+
         for tf in _TF_ORDER:
             total = self._tf_total[tf]
             if total < _MIN_SAMPLES:
-                return   # not enough data for at least one TF — skip
+                # Not enough data: keep the current weight unchanged
+                new_weights[tf] = current_weights.get(tf, 1.0 / len(_TF_ORDER))
+                continue
             wr = self._tf_wins[tf] / total
             # EMA blend between old weight and win-rate-derived target.
-            # target = WR * _WR_SCALE_FACTOR + _WR_BASELINE so that:
-            #   WR=0.50 → target=0.50, WR=1.00 → target=0.90 (capped at max)
-            old_weight = self._confluence._tf_weights.get(tf, 1.0 / len(_TF_ORDER))
+            old_weight = current_weights.get(tf, 1.0 / len(_TF_ORDER))
             target = float(np.clip(wr * _WR_SCALE_FACTOR + _WR_BASELINE,
                                    _TF_WEIGHT_MIN, _TF_WEIGHT_MAX))
             blended = float(np.clip(
@@ -79,10 +86,12 @@ class ConfluenceAdapter:
             ))
             new_weights[tf] = blended
 
-        if len(new_weights) == len(_TF_ORDER):
+        # Only push an update if at least one TF has been adapted
+        adapted = [tf for tf in _TF_ORDER if self._tf_total[tf] >= _MIN_SAMPLES]
+        if adapted:
             self._confluence.update_tf_weights(new_weights)
             logger.info(
-                f"🌊 ConfluenceAdapter: TF weights adapted → "
+                f"🌊 ConfluenceAdapter: TF weights adapted (sampled={adapted}) → "
                 f"{ {k: f'{v:.3f}' for k, v in self._confluence._tf_weights.items()} }"
             )
 
