@@ -321,7 +321,7 @@ def _position_monitor(
                         pattern_tags = ""
                         pattern_ctx = ctx.get("agent_results", {}).get("pattern")
                         if pattern_ctx and hasattr(pattern_ctx, "details"):
-                            pattern_tags = ",".join(list(pattern_ctx.details)[:10])
+                            pattern_tags = ",".join(str(d) for d in list(pattern_ctx.details)[:10])
 
                         for agent_name, score in agent_scores.items():
                             experience_db.save_agent_outcome(

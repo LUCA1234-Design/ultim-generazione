@@ -20,6 +20,14 @@ DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
 
+# Regime-aware threshold multipliers
+_REGIME_THRESHOLD_MULTIPLIERS = {
+    "trending": 0.85,
+    "ranging": 1.20,
+    "volatile": 1.10,
+    "unknown": 1.0,
+}
+
 
 class FusionResult:
     """Final fused decision."""
@@ -186,8 +194,7 @@ class DecisionFusion:
         final_score = float(np.clip(final_score, 0.0, 1.0))
 
         # --- Regime-aware threshold adjustment ---
-        regime_multipliers = {"trending": 0.85, "ranging": 1.20, "volatile": 1.10, "unknown": 1.0}
-        effective_threshold = self._threshold * regime_multipliers.get(regime, 1.0)
+        effective_threshold = self._threshold * _REGIME_THRESHOLD_MULTIPLIERS.get(regime, 1.0)
         effective_threshold = float(np.clip(effective_threshold, 0.20, 0.95))
         reasoning.append(
             f"REGIME_THRESHOLD: regime={regime}, base={self._threshold:.3f}, "

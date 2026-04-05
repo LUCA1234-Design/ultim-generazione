@@ -76,14 +76,17 @@ class PatternAgent(BaseAgent):
                 self._pattern_wins[pattern] = self._pattern_wins.get(pattern, 0) + 1
 
     def get_pattern_stats(self) -> Dict[str, Any]:
-        """Return win rate stats per pattern."""
+        """Return win rate stats per pattern.
+
+        The ``wr`` field is ``0.0`` when no trades have been recorded for a pattern.
+        """
         stats = {}
         for pattern, total in self._pattern_total.items():
             wins = self._pattern_wins.get(pattern, 0)
             stats[pattern] = {
                 "wins": wins,
                 "total": total,
-                "wr": wins / total if total > 0 else None,
+                "wr": wins / total if total > 0 else 0.0,
             }
         return stats
 

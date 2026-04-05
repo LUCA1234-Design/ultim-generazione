@@ -126,8 +126,8 @@ class EventProcessor:
             if df_existing is None or len(df_existing) < 20:
                 continue
             try:
-                returns_new = df_new["close"].pct_change().dropna().iloc[-20:]
-                returns_existing = df_existing["close"].pct_change().dropna().iloc[-20:]
+                returns_new = df_new["close"].iloc[-21:].pct_change().dropna()
+                returns_existing = df_existing["close"].iloc[-21:].pct_change().dropna()
                 min_len = min(len(returns_new), len(returns_existing))
                 if min_len < 10:
                     continue

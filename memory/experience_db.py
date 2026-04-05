@@ -95,8 +95,9 @@ def _create_tables() -> None:
     try:
         _conn.execute("ALTER TABLE agent_performance ADD COLUMN pattern_tags TEXT DEFAULT ''")
         _conn.commit()
-    except Exception:
-        pass  # Column already exists
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e).lower():
+            logger.warning(f"_create_tables migration warning: {e}")
 
 
 # ---------------------------------------------------------------------------
