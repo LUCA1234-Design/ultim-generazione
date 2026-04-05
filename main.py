@@ -174,6 +174,7 @@ def build_system():
     risk             : RiskAgent
     strategy         : StrategyAgent
     confluence       : ConfluenceAgent
+    pattern          : PatternAgent
     decision_context : Dict[str, Dict[str, Any]] — runtime signal context cache
     """
     logger.info("🔧 Building V17 agent system...")
@@ -219,6 +220,11 @@ def build_system():
 
         # Save runtime context for later close handling
         try:
+            # Extract regime from agent_results
+            _regime = "unknown"
+            _regime_result = agent_results.get("regime")
+            if _regime_result and hasattr(_regime_result, "metadata") and _regime_result.metadata:
+                _regime = _regime_result.metadata.get("regime", "unknown")
             decision_context[fusion_result.decision_id] = {
                 "symbol": fusion_result.symbol,
                 "interval": fusion_result.interval,
@@ -229,6 +235,7 @@ def build_system():
                     for name, result in agent_results.items()
                 },
                 "agent_results": dict(agent_results),
+                "regime": _regime,
             }
         except Exception as e:
             logger.error(f"Decision context cache error: {e}")
@@ -246,7 +253,7 @@ def build_system():
     )
 
     logger.info("✅ V17 agent system ready")
-    return processor, meta, tracker, execution, risk, strategy, confluence, decision_context
+    return processor, meta, tracker, execution, risk, strategy, confluence, pattern, decision_context
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +317,12 @@ def _position_monitor(
                         agent_directions = ctx.get("agent_directions", {})
                         correct = (closed.pnl or 0.0) > 0
 
+                        # Extract pattern tags for the pattern agent row
+                        pattern_tags = ""
+                        pattern_ctx = ctx.get("agent_results", {}).get("pattern")
+                        if pattern_ctx and hasattr(pattern_ctx, "details"):
+                            pattern_tags = ",".join(str(d) for d in list(pattern_ctx.details)[:10])
+
                         for agent_name, score in agent_scores.items():
                             experience_db.save_agent_outcome(
                                 decision_id=closed.decision_id,
@@ -317,6 +330,7 @@ def _position_monitor(
                                 score=float(score),
                                 direction=str(agent_directions.get(agent_name, "")),
                                 correct=correct,
+                                pattern_tags=pattern_tags if agent_name == "pattern" else "",
                             )
                     except Exception as e:
                         logger.error(f"save_agent_outcome error: {e}")
@@ -336,12 +350,14 @@ def _position_monitor(
                     try:
                         ctx = decision_context.get(closed.decision_id, {})
                         stored_agent_results = ctx.get("agent_results", {})
+                        regime = ctx.get("regime", "unknown")
                         if stored_agent_results and hasattr(processor.meta, "record_outcome"):
                             was_correct = (closed.pnl or 0.0) > 0
                             processor.meta.record_outcome(
                                 closed.decision_id,
                                 stored_agent_results,
                                 was_correct,
+                                regime=regime,
                             )
                     except Exception as e:
                         logger.error(f"meta.record_outcome error: {e}")
@@ -511,7 +527,7 @@ def main():
                 preload_historical(hg_extra, "HG")
 
         # ---- Build V17 system ----
-        processor, meta, tracker, execution, risk_agent, strategy_agent, confluence_agent, decision_context = build_system()
+        processor, meta, tracker, execution, risk_agent, strategy_agent, confluence_agent, pattern_agent, decision_context = build_system()
 
         # ---- Build & start Evolution Engine ----
         evolution_engine = EvolutionEngine(
@@ -521,6 +537,7 @@ def main():
             strategy_agent=strategy_agent,
             confluence_agent=confluence_agent,
             tracker=tracker,
+            pattern_agent=pattern_agent,
         )
         evolution_engine.startup()
         logger.info("🧬 Evolution Engine started")

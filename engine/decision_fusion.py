@@ -20,6 +20,14 @@ DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
 
+# Regime-aware threshold multipliers
+_REGIME_THRESHOLD_MULTIPLIERS = {
+    "trending": 0.85,
+    "ranging": 1.20,
+    "volatile": 1.10,
+    "unknown": 1.0,
+}
+
 
 class FusionResult:
     """Final fused decision."""
@@ -110,12 +118,14 @@ class DecisionFusion:
     # ------------------------------------------------------------------
 
     def fuse(self, symbol: str, interval: str,
-             agent_results: Dict[str, AgentResult]) -> FusionResult:
+             agent_results: Dict[str, AgentResult],
+             regime: str = "unknown") -> FusionResult:
         """Compute weighted fusion of agent results.
 
         Parameters
         ----------
         agent_results : dict  {agent_name: AgentResult}
+        regime        : current market regime string for threshold adjustment
 
         Returns
         -------
@@ -158,15 +168,45 @@ class DecisionFusion:
                 f"conf={result.confidence:.2f} w={w:.2f} | {', '.join(result.details[:3])}"
             )
 
-        final_score = weighted_score / total_weight if total_weight > 0 else 0.0
         direction = max(direction_votes, key=direction_votes.get) if direction_votes else "neutral"
 
+        # --- Direction consensus bonus/penalty ---
+        total_agents_with_direction = sum(
+            1 for _, r in agent_results.items()
+            if r is not None and r.direction in ("long", "short")
+        )
+        agents_agreeing = sum(
+            1 for _, r in agent_results.items()
+            if r is not None and r.direction == direction
+        )
+        agreement_ratio = agents_agreeing / max(total_agents_with_direction, 1)
+
+        if agreement_ratio >= 0.70:
+            consensus_bonus = 0.05
+            reasoning.append(f"CONSENSUS_BONUS: {agreement_ratio:.0%} agree → +{consensus_bonus}")
+        elif agreement_ratio < 0.40:
+            consensus_bonus = -0.10
+            reasoning.append(f"CONSENSUS_PENALTY: {agreement_ratio:.0%} agree → {consensus_bonus}")
+        else:
+            consensus_bonus = 0.0
+
+        final_score = (weighted_score / total_weight if total_weight > 0 else 0.0) + consensus_bonus
+        final_score = float(np.clip(final_score, 0.0, 1.0))
+
+        # --- Regime-aware threshold adjustment ---
+        effective_threshold = self._threshold * _REGIME_THRESHOLD_MULTIPLIERS.get(regime, 1.0)
+        effective_threshold = float(np.clip(effective_threshold, 0.20, 0.95))
         reasoning.append(
-            f"FUSION: score={final_score:.3f} threshold={self._threshold:.3f} "
+            f"REGIME_THRESHOLD: regime={regime}, base={self._threshold:.3f}, "
+            f"effective={effective_threshold:.3f}"
+        )
+
+        reasoning.append(
+            f"FUSION: score={final_score:.3f} threshold={effective_threshold:.3f} "
             f"direction={direction} ({direction_votes})"
         )
 
-        if final_score >= self._threshold:
+        if final_score >= effective_threshold:
             decision = DECISION_LONG if direction == "long" else DECISION_SHORT
         else:
             decision = DECISION_HOLD
@@ -180,7 +220,7 @@ class DecisionFusion:
             direction=direction,
             agent_scores=agent_scores,
             agent_results=agent_results,
-            threshold=self._threshold,
+            threshold=effective_threshold,
             reasoning=reasoning,
         )
 
@@ -192,20 +232,20 @@ class DecisionFusion:
         if decision != DECISION_HOLD:
             logger.info(
                 f"🎯 DECISION [{decision_id}] {symbol}/{interval}: {decision.upper()} "
-                f"(score={final_score:.3f} ≥ {self._threshold:.3f})"
+                f"(score={final_score:.3f} ≥ {effective_threshold:.3f})"
             )
         else:
             # Log near-miss decisions at INFO level for debugging
-            if final_score >= self._threshold * 0.70:
+            if final_score >= effective_threshold * 0.70:
                 logger.info(
                     f"📊 NEAR-MISS [{decision_id}] {symbol}/{interval}: "
-                    f"score={final_score:.3f} < {self._threshold:.3f} "
-                    f"(gap={self._threshold - final_score:.3f}) agents={agent_scores}"
+                    f"score={final_score:.3f} < {effective_threshold:.3f} "
+                    f"(gap={effective_threshold - final_score:.3f}) agents={agent_scores}"
                 )
             else:
                 logger.debug(
                     f"HOLD [{decision_id}] {symbol}/{interval}: "
-                    f"score={final_score:.3f} < {self._threshold:.3f}"
+                    f"score={final_score:.3f} < {effective_threshold:.3f}"
                 )
 
         return result

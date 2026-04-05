@@ -210,11 +210,38 @@ class StrategyAgent(BaseAgent):
 
         # --- Generate a mutation of the best strategy if below cap ---
         if len(self._strategies) < max_strategies and scored:
-            best_name = scored[0][0]
-            mutated = self.mutate_strategy(best_name)
-            self._strategies.append(mutated)
-            changes.append(f"🧬 added mutation '{mutated['name']}' from '{best_name}'")
-            logger.info(f"StrategyAgent: added mutated strategy '{mutated['name']}'")
+            # Diversity check: count unique base names
+            base_names = set()
+            for p in self._strategies:
+                name = p.get("name", "")
+                base = name.split("_mut_")[0].split("_fresh_")[0] if ("_mut_" in name or "_fresh_" in name) else name
+                base_names.add(base)
+
+            if len(base_names) < 3 and len(self.DEFAULT_STRATEGIES) > 0:
+                # Low diversity: inject a random DEFAULT strategy instead of mutating
+                available = [
+                    s for s in self.DEFAULT_STRATEGIES
+                    if s.get("name") not in [p.get("name") for p in self._strategies]
+                ]
+                if available:
+                    fresh = dict(random.choice(available))
+                    fresh["name"] = f"{fresh['name']}_fresh_{random.randint(100, 999)}"
+                    self._strategies.append(fresh)
+                    changes.append(f"🌱 injected fresh '{fresh['name']}' for diversity")
+                    logger.info(f"StrategyAgent: injected fresh strategy '{fresh['name']}' for diversity")
+                else:
+                    # All defaults present, mutate as usual
+                    best_name = scored[0][0]
+                    mutated = self.mutate_strategy(best_name)
+                    self._strategies.append(mutated)
+                    changes.append(f"🧬 added mutation '{mutated['name']}' from '{best_name}'")
+                    logger.info(f"StrategyAgent: added mutated strategy '{mutated['name']}'")
+            else:
+                best_name = scored[0][0]
+                mutated = self.mutate_strategy(best_name)
+                self._strategies.append(mutated)
+                changes.append(f"🧬 added mutation '{mutated['name']}' from '{best_name}'")
+                logger.info(f"StrategyAgent: added mutated strategy '{mutated['name']}'")
 
         return changes
 

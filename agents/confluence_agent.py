@@ -110,10 +110,15 @@ class ConfluenceAgent(BaseAgent):
                             direction: str) -> Dict[str, float]:
         """Return per-TF bias scores and weighted confluence score."""
         tf_scores: Dict[str, float] = {}
+        tf_directions: list = []
         for tf in TF_ORDER:
             df = data_store.get_df(symbol, tf)
             bias = self._tf_bias(df, direction)
             tf_scores[tf] = bias
+            # Determine per-TF direction based on bias vs opposite
+            opposite = "short" if direction == "long" else "long"
+            opp_bias = self._tf_bias(df, opposite)
+            tf_directions.append(direction if bias >= opp_bias else opposite)
 
         # Weighted average, with primary TF having extra weight
         total_weight = 0.0
@@ -127,9 +132,26 @@ class ConfluenceAgent(BaseAgent):
             total_weight += w_adj
 
         confluence_score = weighted_sum / total_weight if total_weight > 0 else 0.0
+
+        # Direction agreement across timeframes
+        n_long = sum(1 for d in tf_directions if d == "long")
+        n_short = sum(1 for d in tf_directions if d == "short")
+        direction_agreement = max(n_long, n_short) / max(len(tf_directions), 1)
+
+        if direction_agreement >= 0.80:
+            agreement_mult = 1.30
+        elif direction_agreement <= 0.40:
+            agreement_mult = 0.60
+        else:
+            agreement_mult = 1.0
+
+        confluence_score = float(np.clip(confluence_score * agreement_mult, 0.0, 1.0))
+
         return {
             "tf_scores": tf_scores,
-            "confluence": float(np.clip(confluence_score, 0.0, 1.0)),
+            "confluence": confluence_score,
+            "direction_agreement": direction_agreement,
+            "agreement_mult": agreement_mult,
         }
 
     # ------------------------------------------------------------------
@@ -176,6 +198,14 @@ class ConfluenceAgent(BaseAgent):
             direction=final_direction,
             confidence=agreeing / max(total_tfs, 1),
             details=details,
-            metadata={"tf_scores": tf_scores, "agreeing_tfs": agreeing,
-                      "primary_score": primary_score, "opposite_score": opposite_score},
+            metadata={
+                "tf_scores": tf_scores,
+                "agreeing_tfs": agreeing,
+                "primary_score": primary_score,
+                "opposite_score": opposite_score,
+                "direction_agreement": result_primary.get("direction_agreement", 1.0)
+                    if final_direction == direction else result_opposite.get("direction_agreement", 1.0),
+                "agreement_mult": result_primary.get("agreement_mult", 1.0)
+                    if final_direction == direction else result_opposite.get("agreement_mult", 1.0),
+            },
         )

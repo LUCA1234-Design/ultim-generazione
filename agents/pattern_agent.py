@@ -12,7 +12,7 @@ import logging
 import numpy as np
 import pandas as pd
 from scipy.signal import argrelextrema
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Any
 
 from agents.base_agent import BaseAgent, AgentResult
 from indicators.technical import (
@@ -43,6 +43,9 @@ class PatternAgent(BaseAgent):
         super().__init__("pattern", initial_weight=0.30)
         self._thresholds: Dict[str, float] = {}  # key -> adaptive threshold
         self._hit_history: Dict[str, list] = {}  # key -> list of bool (hit/miss)
+        # Per-pattern win rate tracking
+        self._pattern_wins: Dict[str, int] = {}
+        self._pattern_total: Dict[str, int] = {}
 
     def _get_threshold(self, interval: str) -> float:
         default = self._THRESHOLD_DEFAULTS.get(interval, 0.40)
@@ -64,6 +67,28 @@ class PatternAgent(BaseAgent):
             elif hit_rate > 0.65:
                 # Good performance → lower threshold slightly
                 self._thresholds[key] = max(current - 0.01, 0.20)
+
+    def record_pattern_outcome(self, patterns: list, was_correct: bool) -> None:
+        """Record outcome for each pattern that contributed to the signal."""
+        for pattern in patterns:
+            self._pattern_total[pattern] = self._pattern_total.get(pattern, 0) + 1
+            if was_correct:
+                self._pattern_wins[pattern] = self._pattern_wins.get(pattern, 0) + 1
+
+    def get_pattern_stats(self) -> Dict[str, Any]:
+        """Return win rate stats per pattern.
+
+        The ``wr`` field is ``0.0`` when no trades have been recorded for a pattern.
+        """
+        stats = {}
+        for pattern, total in self._pattern_total.items():
+            wins = self._pattern_wins.get(pattern, 0)
+            stats[pattern] = {
+                "wins": wins,
+                "total": total,
+                "wr": wins / total if total > 0 else 0.0,
+            }
+        return stats
 
     # ----------------------------------------------------------------
     # Pattern Detectors
