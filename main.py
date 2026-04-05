@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 # ---- Config ----
 from config.settings import (
@@ -45,6 +45,9 @@ from engine.event_processor import EventProcessor
 # ---- Memory ----
 from memory import experience_db
 from memory.performance_tracker import PerformanceTracker
+
+# ---- Evolution engine ----
+from evolution.evolution_engine import EvolutionEngine
 
 # ---- Services ----
 from services.notification_worker import (
@@ -231,7 +234,7 @@ def build_system():
     )
 
     logger.info("✅ V17 agent system ready")
-    return processor, meta, tracker, execution, risk, decision_context
+    return processor, meta, tracker, execution, risk, strategy, confluence, decision_context
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +244,9 @@ def build_system():
 def _position_monitor(
     processor: EventProcessor,
     tracker: PerformanceTracker,
-    decision_context: Dict[str, Dict[str, Any]],
+    decision_context: Dict[str, Any],
     interval_sec: int = 10,
+    evolution_engine: Optional["EvolutionEngine"] = None,
 ) -> None:
     """Periodically update SL/TP levels for open positions using latest prices."""
     while True:
@@ -336,6 +340,21 @@ def _position_monitor(
                             decision_context.pop(closed.decision_id, None)
                     except Exception as e:
                         logger.debug(f"decision_context cleanup error: {e}")
+
+                    # Notify evolution engine of closed trade (loops #5 & #7)
+                    try:
+                        if evolution_engine is not None:
+                            ctx = decision_context.get(
+                                getattr(closed, "decision_id", None), {}
+                            )
+                            # Also try the processor's own context store
+                            if not ctx and hasattr(processor, "get_decision_context"):
+                                ctx = processor.get_decision_context(
+                                    getattr(closed, "decision_id", None)
+                                ) or {}
+                            evolution_engine.on_trade_close(closed, ctx)
+                    except Exception as e:
+                        logger.error(f"evolution_engine.on_trade_close error: {e}")
 
         except Exception as e:
             logger.debug(f"position_monitor error: {e}")
@@ -480,7 +499,25 @@ def main():
                 preload_historical(hg_extra, "HG")
 
         # ---- Build V17 system ----
-        processor, meta, tracker, execution, risk_agent, decision_context = build_system()
+        processor, meta, tracker, execution, risk_agent, strategy_agent, confluence_agent, decision_context = build_system()
+
+        # ---- Build & start Evolution Engine ----
+        evolution_engine = EvolutionEngine(
+            meta_agent=meta,
+            fusion=processor.fusion,
+            risk_agent=risk_agent,
+            strategy_agent=strategy_agent,
+            confluence_agent=confluence_agent,
+            tracker=tracker,
+        )
+        evolution_engine.startup()
+        logger.info("🧬 Evolution Engine started")
+        logger.info("   - Loop #1 (MetaAgent → Fusion): ON")
+        logger.info("   - Loop #2 (Tracker → RiskAgent): ON")
+        logger.info("   - Loop #3 (Auto-tune threshold): ON")
+        logger.info("   - Loop #5 (Strategy evolution): ON")
+        logger.info("   - Loop #6 (MetaAgent persistence): ON")
+        logger.info("   - Loop #7 (Confluence TF learning): ON")
 
         # ---- Wire WebSocket callbacks ----
         all_symbols = list(set(symbols_whitelist + (symbols_hg_all if HG_MONITOR_ALL else [])))
@@ -510,7 +547,7 @@ def main():
         # ---- Background threads ----
         threading.Thread(
             target=_position_monitor,
-            args=(processor, tracker, decision_context),
+            args=(processor, tracker, decision_context, 10, evolution_engine),
             daemon=True,
             name="PositionMonitor",
         ).start()
@@ -542,26 +579,31 @@ def main():
         logger.info("=" * 60)
 
         # ---- Main loop ----
-        _last_weight_adjust = time.time()
+        _last_evolution_tick = time.time()
         while True:
             time.sleep(30)
             gc.collect()
 
-            # Periodically update risk agent win rates from tracker
+            # Frequently push fresh win rates to RiskAgent (lightweight)
             tracker.update_risk_agent_win_rates(risk_agent, current_balance=execution.get_stats()["balance"])
 
-            # Adjust agent weights every 30 minutes
-            if time.time() - _last_weight_adjust >= 1800:
-                weight_map = meta.adjust_weights()
-                processor.fusion.update_weights(weight_map)
-                logger.info(f"📐 Agent weights adjusted: {weight_map}")
-                _last_weight_adjust = time.time()
+            # Evolution tick every 30 minutes (handles weight adjust, auto-tune, state save)
+            if time.time() - _last_evolution_tick >= 1800:
+                try:
+                    evolution_engine.tick()
+                except Exception as _evo_err:
+                    logger.error(f"evolution_engine.tick error: {_evo_err}")
+                _last_evolution_tick = time.time()
 
     except KeyboardInterrupt:
         logger.info("")
         logger.info("=" * 60)
         logger.info("⏹️ MANUAL SHUTDOWN (Ctrl+C)")
         logger.info("=" * 60)
+        try:
+            evolution_engine.shutdown()
+        except Exception as e:
+            logger.error(f"evolution_engine.shutdown error: {e}")
         try:
             stats = processor.execution.get_stats()
             logger.info(
