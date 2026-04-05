@@ -16,6 +16,9 @@ logger = logging.getLogger("RiskAgent")
 
 DEFAULT_WIN_RATE = 0.55
 
+# Regime-based position sizing multipliers
+_REGIME_SIZE_MULT = {"trending": 1.0, "ranging": 0.7, "volatile": 0.5, "unknown": 0.8}
+
 
 class RiskAgent(BaseAgent):
     """Adaptive risk agent with Kelly sizing and ATR-based levels."""
@@ -88,7 +91,8 @@ class RiskAgent(BaseAgent):
 
     def calc_position_size(self, entry: float, sl: float,
                             win_rate: float = DEFAULT_WIN_RATE,
-                            rr: float = 2.0) -> float:
+                            rr: float = 2.0,
+                            regime: str = "unknown") -> float:
         """Return position size in base currency units."""
         risk_per_unit = abs(entry - sl)
         if risk_per_unit < 1e-10:
@@ -96,6 +100,9 @@ class RiskAgent(BaseAgent):
         k = self.kelly_fraction(win_rate, rr)
         risk_amount = self._balance * k
         size = risk_amount / risk_per_unit
+        # Apply regime multiplier
+        regime_mult = _REGIME_SIZE_MULT.get(regime, 0.8)
+        size = size * regime_mult
         return round(float(size), 4)
 
     # ------------------------------------------------------------------
@@ -103,7 +110,8 @@ class RiskAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     def analyse(self, symbol: str, interval: str, df,
-                direction: str = "long") -> Optional[AgentResult]:
+                direction: str = "long",
+                regime: str = "unknown") -> Optional[AgentResult]:
         if df is None or len(df) < 20:
             return None
 
@@ -111,7 +119,7 @@ class RiskAgent(BaseAgent):
         sl, tp1, tp2, rr = self.calc_levels(df, direction)
         entry = float(df["close"].iloc[-1])
         kelly = self.kelly_fraction(win_rate, rr)
-        size = self.calc_position_size(entry, sl, win_rate, rr)
+        size = self.calc_position_size(entry, sl, win_rate, rr, regime=regime)
 
         # Risk score: higher R/R and win rate → higher score
         rr_score = float(np.clip(rr / 3.0, 0.0, 1.0))                           # was (rr-1.0)/3.0; R/R=2 now gives 0.67 instead of 0.33

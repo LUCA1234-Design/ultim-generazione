@@ -60,7 +60,8 @@ def _create_tables() -> None:
             agent_name  TEXT    NOT NULL,
             score       REAL,
             direction   TEXT,
-            correct     INTEGER
+            correct     INTEGER,
+            pattern_tags TEXT   DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS optimal_params (
@@ -90,6 +91,12 @@ def _create_tables() -> None:
         );
     """)
     _conn.commit()
+    # Migrate existing databases: add pattern_tags column if absent
+    try:
+        _conn.execute("ALTER TABLE agent_performance ADD COLUMN pattern_tags TEXT DEFAULT ''")
+        _conn.commit()
+    except Exception:
+        pass  # Column already exists
 
 
 # ---------------------------------------------------------------------------
@@ -150,16 +157,17 @@ def get_recent_decisions(limit: int = 20) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 def save_agent_outcome(decision_id: str, agent_name: str, score: float,
-                        direction: str, correct: bool) -> None:
+                        direction: str, correct: bool,
+                        pattern_tags: str = "") -> None:
     if _conn is None:
         return
     with _lock:
         try:
             _conn.execute(
                 """INSERT INTO agent_performance
-                   (ts, decision_id, agent_name, score, direction, correct)
-                   VALUES (?,?,?,?,?,?)""",
-                (time.time(), decision_id, agent_name, score, direction, int(correct))
+                   (ts, decision_id, agent_name, score, direction, correct, pattern_tags)
+                   VALUES (?,?,?,?,?,?,?)""",
+                (time.time(), decision_id, agent_name, score, direction, int(correct), pattern_tags)
             )
             _conn.commit()
         except Exception as e:

@@ -78,6 +78,7 @@ class EventProcessor:
             "max_daily_loss_usdt": 0,
             "max_daily_loss_pct": 0,
             "max_consecutive_losses": 0,
+            "high_correlation": 0,
         }
 
     # ------------------------------------------------------------------
@@ -100,6 +101,47 @@ class EventProcessor:
     
     def _skip(self, reason: str) -> None:
         self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+
+    # ------------------------------------------------------------------
+    # Correlation guard
+    # ------------------------------------------------------------------
+
+    def _correlation_check(self, symbol: str, interval: str) -> float:
+        """Return average correlation between symbol and all open positions.
+
+        Returns 0.0 if no open positions or insufficient data.
+        """
+        open_pos = self.execution.get_open_positions()
+        if not open_pos:
+            return 0.0
+
+        df_new = data_store.get_df(symbol, interval)
+        if df_new is None or len(df_new) < 20:
+            return 0.0
+
+        import numpy as np
+        correlations = []
+        for pos in open_pos:
+            df_existing = data_store.get_df(pos.symbol, interval)
+            if df_existing is None or len(df_existing) < 20:
+                continue
+            try:
+                returns_new = df_new["close"].pct_change().dropna().iloc[-20:]
+                returns_existing = df_existing["close"].pct_change().dropna().iloc[-20:]
+                min_len = min(len(returns_new), len(returns_existing))
+                if min_len < 10:
+                    continue
+                corr = float(
+                    np.corrcoef(
+                        returns_new.iloc[-min_len:],
+                        returns_existing.iloc[-min_len:],
+                    )[0, 1]
+                )
+                correlations.append(corr)
+            except Exception:
+                continue
+
+        return float(np.mean(correlations)) if correlations else 0.0
 
     # ------------------------------------------------------------------
     # Main event handler
@@ -157,6 +199,13 @@ class EventProcessor:
             logger.debug(f"⛔ {symbol}/{interval} SKIP: insufficient_data | df_len={len(df) if df is not None else 0}")
             return None
 
+        # Guard: correlation with existing positions
+        avg_correlation = self._correlation_check(symbol, interval)
+        if avg_correlation > 0.80:
+            self._skip("high_correlation")
+            logger.info(f"⛔ {symbol}/{interval} SKIP: high_correlation={avg_correlation:.2f}")
+            return None
+
         # ---- Run agents ----
         agent_results: Dict[str, AgentResult] = {}
 
@@ -171,8 +220,13 @@ class EventProcessor:
 
         # Regime agent
         regime_result = self.regime.safe_analyse(symbol, interval, df)
+        current_regime = "unknown"
         if regime_result is not None:
             agent_results["regime"] = regime_result
+            current_regime = (
+                regime_result.metadata.get("regime", "unknown")
+                if regime_result.metadata else "unknown"
+            )
 
         # Confluence agent
         confluence_result = self.confluence.safe_analyse(symbol, interval, df, direction_hint)
@@ -180,7 +234,7 @@ class EventProcessor:
             agent_results["confluence"] = confluence_result
 
         # Risk agent
-        risk_result = self.risk.safe_analyse(symbol, interval, df, direction_hint)
+        risk_result = self.risk.safe_analyse(symbol, interval, df, direction_hint, regime=current_regime)
         if risk_result is not None:
             agent_results["risk"] = risk_result
 
@@ -208,7 +262,7 @@ class EventProcessor:
             return None
 
         # ---- Fuse decisions ----
-        fusion_result = self.fusion.fuse(symbol, interval, agent_results)
+        fusion_result = self.fusion.fuse(symbol, interval, agent_results, regime=current_regime)
 
         if fusion_result.decision == DECISION_HOLD:
             self._skip("hold_decision")
@@ -306,6 +360,7 @@ class EventProcessor:
                     "agent_directions": {n: r.direction for n, r in agent_results.items()},
                     "agent_results": dict(agent_results),
                     "fusion_score": fusion_result.final_score,
+                    "regime": current_regime,
                 }
             except Exception as _ctx_err:
                 logger.debug(f"decision_context store error: {_ctx_err}")
