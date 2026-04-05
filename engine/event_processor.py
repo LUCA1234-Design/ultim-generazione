@@ -61,6 +61,8 @@ class EventProcessor:
         self._processed_count = 0
         self._signal_count = 0
         self._last_signal_info: str = ""
+        # Per-decision context stored on close for feedback loops
+        self._decision_contexts: Dict[str, Dict[str, Any]] = {}
         self._skip_reasons: Dict[str, int] = {
             "forbidden_hour": 0,
             "cooldown": 0,
@@ -295,6 +297,19 @@ class EventProcessor:
                 signal_tags = list(pattern_result.details)
             fusion_result.signal_tags = signal_tags
 
+            # Store decision context so the evolution engine can access it later
+            try:
+                self._decision_contexts[fusion_result.decision_id] = {
+                    "symbol": symbol,
+                    "interval": interval,
+                    "agent_scores": {n: r.score for n, r in agent_results.items()},
+                    "agent_directions": {n: r.direction for n, r in agent_results.items()},
+                    "agent_results": dict(agent_results),
+                    "fusion_score": fusion_result.final_score,
+                }
+            except Exception as _ctx_err:
+                logger.debug(f"decision_context store error: {_ctx_err}")
+
             # Notify via callback
             if self.on_signal:
                 try:
@@ -307,6 +322,14 @@ class EventProcessor:
     def on_price_update(self, symbol: str, current_price: float) -> None:
         """Called on every realtime update to check SL/TP for open positions."""
         self.execution.check_position_levels(symbol, current_price)
+
+    def get_decision_context(self, decision_id: str) -> Optional[Dict[str, Any]]:
+        """Return the stored per-decision context, or None if not found."""
+        return self._decision_contexts.get(decision_id)
+
+    def clear_decision_context(self, decision_id: str) -> None:
+        """Remove a stored decision context after it has been consumed."""
+        self._decision_contexts.pop(decision_id, None)
 
     def get_stats(self) -> Dict[str, Any]:
         return {

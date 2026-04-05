@@ -28,6 +28,26 @@ class ConfluenceAgent(BaseAgent):
 
     def __init__(self):
         super().__init__("confluence", initial_weight=0.25)
+        # Instance-level TF weights so the evolution engine can adapt them at runtime
+        self._tf_weights: Dict[str, float] = dict(TF_WEIGHTS)
+
+    def update_tf_weights(self, new_weights: dict) -> None:
+        """Update per-timeframe weights used in confluence scoring.
+
+        Values are clipped to [0.05, 0.70] and normalised to sum to 1.0 so the
+        weighted average in ``compute_confluence()`` remains well-behaved.
+        """
+        _default_weight = 1.0 / len(TF_ORDER)
+        cleaned = {}
+        for tf in TF_ORDER:
+            raw = new_weights.get(tf, self._tf_weights.get(tf, _default_weight))
+            cleaned[tf] = float(np.clip(float(raw), 0.05, 0.70))
+        total = sum(cleaned.values())
+        if total > 0:
+            self._tf_weights = {tf: cleaned[tf] / total for tf in TF_ORDER}
+            logger.info(f"🌊 ConfluenceAgent: TF weights updated → {self._tf_weights}")
+        else:
+            logger.warning("ConfluenceAgent.update_tf_weights: all-zero weights ignored")
 
     # ------------------------------------------------------------------
     # Per-timeframe directional bias score
@@ -98,7 +118,7 @@ class ConfluenceAgent(BaseAgent):
         # Weighted average, with primary TF having extra weight
         total_weight = 0.0
         weighted_sum = 0.0
-        for tf, w in TF_WEIGHTS.items():
+        for tf, w in self._tf_weights.items():
             if tf == primary_interval:
                 w_adj = w * 1.5
             else:

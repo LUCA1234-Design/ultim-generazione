@@ -161,6 +161,64 @@ class StrategyAgent(BaseAgent):
         return mutated
 
     # ------------------------------------------------------------------
+    # Strategy evolution
+    # ------------------------------------------------------------------
+
+    def prune_and_evolve(
+        self,
+        min_samples: int = 10,
+        min_win_rate: float = 0.35,
+        max_strategies: int = 10,
+    ) -> List[str]:
+        """Prune under-performing strategies and optionally generate a mutation.
+
+        Parameters
+        ----------
+        min_samples   : minimum recorded trades before a strategy is eligible for pruning
+        min_win_rate  : strategies below this win-rate (and with enough samples) are removed
+        max_strategies: cap on total strategy count; new mutations are added only below cap
+
+        Returns
+        -------
+        A list of human-readable change descriptions (empty if nothing changed).
+        """
+        changes: List[str] = []
+
+        # --- Find the best and worst strategies (by historical score) ---
+        scored = [
+            (p.get("name", "unknown"), self._strategy_scores.get(p.get("name", ""), 0.5),
+             self._strategy_counts.get(p.get("name", ""), 0))
+            for p in self._strategies
+        ]
+        # Sort: highest win-rate first
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        # --- Prune losers ---
+        to_prune = [
+            name for name, wr, n in scored
+            if n >= min_samples and wr < min_win_rate
+        ]
+        # Never remove the last strategy
+        for name in to_prune:
+            if len(self._strategies) <= 1:
+                break
+            self._strategies = [p for p in self._strategies if p.get("name") != name]
+            self._strategy_scores.pop(name, None)
+            self._strategy_counts.pop(name, None)
+            changes.append(f"❌ pruned '{name}' (wr<{min_win_rate:.0%})")
+            logger.info(f"StrategyAgent: pruned low-performing strategy '{name}'")
+
+        # --- Generate a mutation of the best strategy if below cap ---
+        if len(self._strategies) < max_strategies and scored:
+            best_name = scored[0][0]
+            mutated = self.mutate_strategy(best_name)
+            self._strategies.append(mutated)
+            changes.append(f"🧬 added mutation '{mutated['name']}' from '{best_name}'")
+            logger.info(f"StrategyAgent: added mutated strategy '{mutated['name']}'")
+
+        return changes
+
+    # ------------------------------------------------------------------
     # BaseAgent interface
     # ------------------------------------------------------------------
 
