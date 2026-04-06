@@ -34,7 +34,7 @@ AI_CALL_COOLDOWN = 300
 PAPER_TRADING = True           # Paper trading ON by default
 ACCOUNT_BALANCE = 1000.0
 THRESHOLD_BASE = 0.35
-MAX_OPEN_POSITIONS = 5
+MAX_OPEN_POSITIONS = 3
 LEVERAGE = 10
 
 # ============================================================
@@ -45,10 +45,10 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
-MIN_FUSION_SCORE = 0.25          # Lowered from 0.30: real quality filter is the fusion threshold + R/R gate
-MIN_AGENT_CONFIRMATIONS = 3      # Lowered from 4: MetaAgent/StrategyAgent can fail, 3 is enough to confirm a signal
-NON_OPTIMAL_HOUR_PENALTY = 0.01  # Extra fusion score required outside optimal trading hours (was 0.02)
-MIN_RR = 1.00                    # Lowered from 1.20: R/R 1:1 acceptable for crypto futures
+MIN_FUSION_SCORE = 0.50          # Raised from 0.25: sniper calibration — only high-confidence signals
+MIN_AGENT_CONFIRMATIONS = 4      # Raised from 3: require more agent consensus
+NON_OPTIMAL_HOUR_PENALTY = 0.05  # Raised from 0.01: significant penalty outside optimal hours
+MIN_RR = 1.80                    # Raised from 1.00: reward must outweigh risk 1.8×
 
 WS_STALE_TIMEOUT = 60
 WS_HEALTH_LOG_INTERVAL = 120
@@ -84,8 +84,8 @@ HG_CFG = {
 # SIGNAL MANAGEMENT
 # ============================================================
 
-SIGNAL_COOLDOWN = 600
-SIGNAL_COOLDOWN_BY_TF = {"15m": 300, "1h": 600, "4h": 3600}
+SIGNAL_COOLDOWN = 1800
+SIGNAL_COOLDOWN_BY_TF = {"15m": 900, "1h": 3600, "4h": 7200}
 DIVERGENCE_MAX_AGE_HOURS = 4
 DIVERGENCE_MAX_AGE_CANDLES = 3
 DIVERGENCE_MAX_AGE_BY_TF = {"15m": 2, "1h": 2, "4h": 1}
@@ -147,14 +147,14 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 # DECISION FUSION
 # ============================================================
 
-FUSION_THRESHOLD_DEFAULT = 0.30  # Lowered from 0.35: with meta weight fix, agents average ~0.40-0.55 so 0.30 is safety net
+FUSION_THRESHOLD_DEFAULT = 0.55  # Raised from 0.30: sniper calibration — fewer but higher-quality signals
 FUSION_AGENT_WEIGHTS = {
-    "regime": 0.20,
-    "pattern": 0.30,       # was 0.25 — pattern detection is the core signal source
-    "confluence": 0.25,
-    "risk": 0.15,
-    "strategy": 0.15,
-    "meta": 0.05,           # ADDED — prevents default weight of 1.0 from dominating fusion
+    "regime": 0.15,
+    "pattern": 0.30,       # unchanged — pattern detection is the core signal source
+    "confluence": 0.30,    # raised from 0.25 — MTF confluence is the key filter
+    "risk": 0.15,          # unchanged
+    "strategy": 0.05,      # reduced from 0.15 — mutated strategies are noisy
+    "meta": 0.05,          # unchanged
 }
 
 # ============================================================

@@ -15,7 +15,9 @@ from config.settings import FUSION_THRESHOLD_DEFAULT, FUSION_AGENT_WEIGHTS
 
 logger = logging.getLogger("DecisionFusion")
 
-# Decision outcomes
+# Sniper calibration constants
+_SNIPER_MIN_DIRECTION_AGREEMENT = 0.60   # minimum fraction of directional agents that must agree
+_SNIPER_MIN_AGREEING_TIMEFRAMES = 2      # minimum timeframes agreeing for MTF confluence
 DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
@@ -106,12 +108,12 @@ class DecisionFusion:
             self._threshold_history.pop(0)
         if len(self._threshold_history) >= 20:
             recent_acc = sum(self._threshold_history[-20:]) / 20
-            if recent_acc < 0.40:
-                # Too many wrong — raise threshold
-                self._threshold = float(np.clip(self._threshold + 0.02, 0.30, 0.90))
-            elif recent_acc > 0.65:
+            if recent_acc < 0.45:
+                # Too many wrong — raise threshold more aggressively
+                self._threshold = float(np.clip(self._threshold + 0.03, 0.50, 0.85))
+            elif recent_acc > 0.70:
                 # Good accuracy — slightly lower threshold
-                self._threshold = float(np.clip(self._threshold - 0.01, 0.30, 0.90))
+                self._threshold = float(np.clip(self._threshold - 0.005, 0.50, 0.85))
 
     # ------------------------------------------------------------------
     # Fusion
@@ -169,6 +171,31 @@ class DecisionFusion:
             )
 
         direction = max(direction_votes, key=direction_votes.get) if direction_votes else "neutral"
+
+        # ---- SNIPER: Direction unanimity filter ----
+        directional_agents = [
+            name for name, r in agent_results.items()
+            if r is not None and r.direction in ("long", "short")
+        ]
+        agreeing_agents = [
+            name for name, r in agent_results.items()
+            if r is not None and r.direction == direction
+        ]
+        if len(directional_agents) >= 3:
+            agreement_ratio = len(agreeing_agents) / len(directional_agents)
+            if agreement_ratio < _SNIPER_MIN_DIRECTION_AGREEMENT:
+                reasoning.append(
+                    f"SNIPER_VETO: direction_agreement={agreement_ratio:.0%} "
+                    f"({len(agreeing_agents)}/{len(directional_agents)}) — need >={_SNIPER_MIN_DIRECTION_AGREEMENT:.0%}"
+                )
+                final_score = weighted_score / total_weight if total_weight > 0 else 0.0
+                return FusionResult(
+                    decision_id=decision_id, symbol=symbol, interval=interval,
+                    decision=DECISION_HOLD, final_score=float(final_score),
+                    direction=direction, agent_scores=agent_scores,
+                    agent_results=agent_results, threshold=self._threshold,
+                    reasoning=reasoning,
+                )
 
         # --- Direction consensus bonus/penalty ---
         total_agents_with_direction = sum(
