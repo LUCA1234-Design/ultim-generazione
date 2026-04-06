@@ -14,7 +14,7 @@ from agents.confluence_agent import ConfluenceAgent
 from agents.risk_agent import RiskAgent
 from agents.strategy_agent import StrategyAgent
 from agents.meta_agent import MetaAgent
-from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD
+from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, _SNIPER_MIN_AGREEING_TIMEFRAMES
 from engine.execution import ExecutionEngine
 from data import data_store
 from config.settings import (
@@ -79,6 +79,8 @@ class EventProcessor:
             "max_daily_loss_pct": 0,
             "max_consecutive_losses": 0,
             "high_correlation": 0,
+            "unfavorable_regime": 0,
+            "weak_confluence": 0,
         }
 
     # ------------------------------------------------------------------
@@ -228,10 +230,29 @@ class EventProcessor:
                 if regime_result.metadata else "unknown"
             )
 
+        # ---- SNIPER: Skip volatile regimes unless score is very high ----
+        if current_regime == "volatile" and regime_result is not None:
+            if regime_result.score < 0.70:
+                self._skip("unfavorable_regime")
+                logger.info(
+                    f"⛔ {symbol}/{interval} SKIP: volatile_regime "
+                    f"score={regime_result.score:.2f} < 0.70"
+                )
+                return None
+
         # Confluence agent
         confluence_result = self.confluence.safe_analyse(symbol, interval, df, direction_hint)
         if confluence_result is not None:
             agent_results["confluence"] = confluence_result
+            # ---- SNIPER: Require at least 2/3 TFs agreeing ----
+            agreeing_tfs = confluence_result.metadata.get("agreeing_tfs", 0) if confluence_result.metadata else 0
+            if agreeing_tfs < _SNIPER_MIN_AGREEING_TIMEFRAMES:
+                self._skip("weak_confluence")
+                logger.info(
+                    f"⛔ {symbol}/{interval} SKIP: weak_confluence "
+                    f"agreeing_tfs={agreeing_tfs}/3"
+                )
+                return None
 
         # Risk agent
         risk_result = self.risk.safe_analyse(symbol, interval, df, direction_hint, regime=current_regime)
