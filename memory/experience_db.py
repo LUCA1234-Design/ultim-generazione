@@ -286,3 +286,19 @@ def get_win_rate_by_interval(interval: str) -> Optional[float]:
         except Exception as e:
             logger.error(f"get_win_rate_by_interval error: {e}")
     return None
+
+
+def get_completed_trade_count() -> int:
+    """Return the total number of completed trades (those with a non-null pnl)."""
+    if _conn is None:
+        return 0
+    with _lock:
+        try:
+            row = _conn.execute(
+                "SELECT COUNT(*) AS cnt FROM trade_outcomes WHERE pnl IS NOT NULL"
+            ).fetchone()
+            if row:
+                return int(row["cnt"])
+        except Exception as e:
+            logger.error(f"get_completed_trade_count error: {e}")
+    return 0

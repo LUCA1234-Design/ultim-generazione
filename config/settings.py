@@ -48,7 +48,7 @@ MAX_CONSECUTIVE_LOSSES = 3
 MIN_FUSION_SCORE = 0.50          # Raised from 0.25: sniper calibration — only high-confidence signals
 MIN_AGENT_CONFIRMATIONS = 4      # Raised from 3: require more agent consensus
 NON_OPTIMAL_HOUR_PENALTY = 0.05  # Raised from 0.01: significant penalty outside optimal hours
-MIN_RR = 1.80                    # Raised from 1.00: reward must outweigh risk 1.8×
+MIN_RR = 1.60                    # Fixed from 1.80: base R/R (SL=1.5×ATR, TP1=2.5×ATR) gives 1.667 — must be below base
 
 WS_STALE_TIMEOUT = 60
 WS_HEALTH_LOG_INTERVAL = 120
@@ -171,3 +171,42 @@ HEARTBEAT_ENABLED = True
 PERF_TP1_MULT = 2.0           # ATR multiplier for TP1 evaluation
 PERF_SL_MULT = 2.0            # ATR multiplier for SL evaluation
 PERF_LOOKBACK_HOURS = 24      # How far back to evaluate outcomes
+
+# ============================================================
+# TRAINING MODE
+# Enable reduced thresholds to accumulate trades rapidly so
+# the 7 feedback loops receive enough data to activate.
+# Once TRAINING_TARGET_TRADES completed trades are recorded
+# in the DB the system auto-switches to Sniper Mode.
+# ============================================================
+
+TRAINING_MODE = True                # Enable reduced thresholds for fast learning
+TRAINING_TARGET_TRADES = 200        # Completed trades required before switching to Sniper Mode
+
+# Training Mode overrides (lower thresholds to generate more signals)
+TRAINING_FUSION_THRESHOLD = 0.35
+TRAINING_MIN_FUSION_SCORE = 0.30
+TRAINING_MIN_AGENT_CONFIRMATIONS = 3
+TRAINING_MIN_RR = 1.20
+TRAINING_NON_OPTIMAL_HOUR_PENALTY = 0.02
+TRAINING_SIGNAL_COOLDOWN_BY_TF = {"15m": 600, "1h": 1800, "4h": 3600}
+TRAINING_MAX_OPEN_POSITIONS = 5
+
+# Sniper Mode values (restored after training completes)
+SNIPER_FUSION_THRESHOLD = 0.55
+SNIPER_MIN_FUSION_SCORE = 0.50
+SNIPER_MIN_AGENT_CONFIRMATIONS = 4
+SNIPER_MIN_RR = 1.60
+SNIPER_NON_OPTIMAL_HOUR_PENALTY = 0.05
+SNIPER_SIGNAL_COOLDOWN_BY_TF = {"15m": 900, "1h": 3600, "4h": 7200}
+SNIPER_MAX_OPEN_POSITIONS = 3
+
+# Apply training overrides automatically when TRAINING_MODE is active
+if TRAINING_MODE:
+    FUSION_THRESHOLD_DEFAULT = TRAINING_FUSION_THRESHOLD
+    MIN_FUSION_SCORE = TRAINING_MIN_FUSION_SCORE
+    MIN_AGENT_CONFIRMATIONS = TRAINING_MIN_AGENT_CONFIRMATIONS
+    MIN_RR = TRAINING_MIN_RR
+    NON_OPTIMAL_HOUR_PENALTY = TRAINING_NON_OPTIMAL_HOUR_PENALTY
+    SIGNAL_COOLDOWN_BY_TF = TRAINING_SIGNAL_COOLDOWN_BY_TF
+    MAX_OPEN_POSITIONS = TRAINING_MAX_OPEN_POSITIONS
