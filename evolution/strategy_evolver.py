@@ -32,17 +32,29 @@ class StrategyEvolver:
     def trade_count(self) -> int:
         return self._trade_count
 
+    @trade_count.setter
+    def trade_count(self, value: int) -> None:
+        self._trade_count = max(0, int(value))
+
     def record_trade(self, strategy_name: str, was_profitable: bool) -> None:
         """Register a closed trade outcome and trigger evolution if due.
 
         Parameters
         ----------
         strategy_name  : name of the strategy that generated the signal.
-                         Accepted for API symmetry; per-strategy win-rate
-                         tracking is handled by StrategyAgent internally.
         was_profitable : whether the trade closed with positive P&L
         """
         self._trade_count += 1
+
+        # Forward per-strategy outcome to StrategyAgent so its internal
+        # win-rate tracking (_strategy_scores / _strategy_counts) stays
+        # up-to-date.  Without this call prune_and_evolve() would only
+        # ever see the default 0.5 score for every strategy.
+        if strategy_name:
+            try:
+                self._strategy.update_strategy_outcome(strategy_name, was_profitable)
+            except Exception as exc:
+                logger.warning(f"StrategyEvolver: update_strategy_outcome error: {exc}")
 
         if self._trade_count % self._evolve_every == 0:
             self._run_evolution()
