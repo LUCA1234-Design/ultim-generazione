@@ -15,7 +15,13 @@ from config.settings import (
     HG_MIN_QUOTE_VOL, SYMBOLS_LIMIT, TELEGRAM_TEST_ON_START,
     STARTUP_TIMEOUT, POLL_CLOSED_ENABLE, DB_PATH,
     HEARTBEAT_INTERVAL, HEARTBEAT_ENABLED,
+    TRAINING_MODE, TRAINING_TARGET_TRADES,
+    SNIPER_FUSION_THRESHOLD, SNIPER_MIN_FUSION_SCORE,
+    SNIPER_MIN_AGENT_CONFIRMATIONS, SNIPER_MIN_RR,
+    SNIPER_NON_OPTIMAL_HOUR_PENALTY, SNIPER_SIGNAL_COOLDOWN_BY_TF,
+    SNIPER_MAX_OPEN_POSITIONS,
 )
+import config.settings as _cfg  # Used for runtime threshold updates on Training → Sniper switch
 
 # ---- Data layer ----
 from data import data_store
@@ -84,6 +90,8 @@ logger = logging.getLogger("Main")
 symbols_whitelist = []    # Top N by volume (for divergence/pattern scanning)
 symbols_hg_all = []       # All USDT-M perpetual futures (for HG scan)
 
+# Global flag: True once Training Mode has completed and Sniper Mode is active
+_sniper_mode_active: bool = False
 
 def load_top_symbols(limit: int = SYMBOLS_LIMIT) -> None:
     global symbols_whitelist
@@ -418,6 +426,16 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
             fusion_threshold = stats.get("fusion_threshold", 0.0)
             last_signal_info = stats.get("last_signal", "")
 
+            # Build training-mode status string for heartbeat
+            try:
+                completed_trades = experience_db.get_completed_trade_count()
+            except Exception:
+                completed_trades = 0
+            if _sniper_mode_active:
+                training_status = "🎯 Sniper Mode attivo"
+            else:
+                training_status = f"📚 Trade: {completed_trades}/{TRAINING_TARGET_TRADES} → Training Mode"
+
             msg = build_heartbeat_message(
                 uptime_hours=hours,
                 uptime_minutes=minutes,
@@ -429,6 +447,7 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
                 skip_reasons=skip_reasons,
                 fusion_threshold=fusion_threshold,
                 last_signal_info=last_signal_info,
+                training_status=training_status,
             )
             send_message(msg)
             logger.info("🫀 Heartbeat sent")
@@ -611,6 +630,8 @@ def main():
         logger.info("=" * 60)
 
         # ---- Main loop ----
+        global _sniper_mode_active
+        _sniper_mode_active = not TRAINING_MODE  # True from the start if training is disabled
         _last_evolution_tick = time.time()
         while True:
             time.sleep(30)
@@ -618,6 +639,39 @@ def main():
 
             # Frequently push fresh win rates to RiskAgent (lightweight)
             tracker.update_risk_agent_win_rates(risk_agent, current_balance=execution.get_stats()["balance"])
+
+            # Auto-switch: Training Mode → Sniper Mode once enough trades are completed
+            if TRAINING_MODE and not _sniper_mode_active:
+                try:
+                    completed = experience_db.get_completed_trade_count()
+                    if completed >= TRAINING_TARGET_TRADES:
+                        _sniper_mode_active = True
+                        logger.info(
+                            f"🎓 TRAINING COMPLETATO ({completed} trade) — passaggio a Sniper Mode"
+                        )
+                        # Apply Sniper Mode thresholds to running components
+                        processor.fusion.threshold = SNIPER_FUSION_THRESHOLD
+                        _cfg.FUSION_THRESHOLD_DEFAULT = SNIPER_FUSION_THRESHOLD
+                        _cfg.MIN_FUSION_SCORE = SNIPER_MIN_FUSION_SCORE
+                        _cfg.MIN_AGENT_CONFIRMATIONS = SNIPER_MIN_AGENT_CONFIRMATIONS
+                        _cfg.MIN_RR = SNIPER_MIN_RR
+                        _cfg.NON_OPTIMAL_HOUR_PENALTY = SNIPER_NON_OPTIMAL_HOUR_PENALTY
+                        _cfg.SIGNAL_COOLDOWN_BY_TF = SNIPER_SIGNAL_COOLDOWN_BY_TF
+                        _cfg.MAX_OPEN_POSITIONS = SNIPER_MAX_OPEN_POSITIONS
+                        try:
+                            send_message(
+                                f"🎓 *V17 TRAINING COMPLETATO*\n\n"
+                                f"✅ {completed} trade completati\n"
+                                f"🎯 Passaggio a *Sniper Mode* — soglie alzate:\n"
+                                f"  • Fusion threshold: {SNIPER_FUSION_THRESHOLD}\n"
+                                f"  • Min fusion score: {SNIPER_MIN_FUSION_SCORE}\n"
+                                f"  • Min agents: {SNIPER_MIN_AGENT_CONFIRMATIONS}\n"
+                                f"  • Min R/R: {SNIPER_MIN_RR}"
+                            )
+                        except Exception as _notify_err:
+                            logger.error(f"Sniper Mode notification error: {_notify_err}")
+                except Exception as _switch_err:
+                    logger.error(f"Training→Sniper auto-switch error: {_switch_err}")
 
             # Evolution tick every 30 minutes (handles weight adjust, auto-tune, state save)
             if time.time() - _last_evolution_tick >= 1800:
