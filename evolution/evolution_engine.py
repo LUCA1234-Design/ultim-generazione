@@ -47,8 +47,7 @@ _DRAWDOWN_CRITICAL = 0.15   # 15% → safe mode
 class EvolutionEngine:
     """Central orchestrator that wires all V17 feedback loops."""
 
-    def __init__(
-        self,
+    def __init__(self,
         meta_agent,
         fusion,
         risk_agent,
@@ -96,7 +95,7 @@ class EvolutionEngine:
             if saved_threshold is not None:
                 clamped = float(np.clip(float(saved_threshold), _THRESHOLD_MIN, _THRESHOLD_MAX))
                 self._fusion._threshold = clamped
-                logger.info(f"🔧 EvolutionEngine: restored fusion_threshold={clamped:.3f}")
+                logger.info(f"🔧 EvolutionEngine: restored fusion_threshold={{clamped:.3f}}")
         except Exception as exc:
             logger.error(f"EvolutionEngine.startup restore_threshold error: {exc}")
 
@@ -108,6 +107,18 @@ class EvolutionEngine:
                 logger.info("🌊 EvolutionEngine: confluence TF performance data restored")
         except Exception as exc:
             logger.debug(f"EvolutionEngine.startup TF data restore error: {exc}")
+
+        # Loop #5: restore strategy evolver trade count
+        try:
+            saved_count = experience_db.get_param("strategy_evolver_trade_count")
+            if saved_count is not None:
+                self._strategy_evolver.trade_count = int(saved_count)
+                logger.info(
+                    f"🧬 EvolutionEngine: restored strategy_evolver trade_count="
+                    f"{{self._strategy_evolver.trade_count}}"
+                )
+        except Exception as exc:
+            logger.debug(f"EvolutionEngine.startup strategy trade_count restore error: {exc}")
 
     def on_trade_close(
         self,
@@ -152,9 +163,17 @@ class EvolutionEngine:
                     interval = ctx.get("interval", "1h")
                     self._pattern.update_threshold(interval, was_profitable)
                     if pattern_result and hasattr(pattern_result, "details"):
-                        patterns = list(pattern_result.details)
-                        if hasattr(self._pattern, "record_pattern_outcome"):
-                            self._pattern.record_pattern_outcome(patterns, was_profitable)
+                        # details is a list of human-readable strings like
+                        # "squeeze_active(5b)", "RSI_active(38)", etc.
+                        # Extract the tag portion (before any parenthesis)
+                        # so that record_pattern_outcome receives clean
+                        # pattern names instead of raw detail strings.
+                        raw_details = list(pattern_result.details)
+                        pattern_tags = [
+                            d.split("(")[0] for d in raw_details if d
+                        ]
+                        if pattern_tags and hasattr(self._pattern, "record_pattern_outcome"):
+                            self._pattern.record_pattern_outcome(pattern_tags, was_profitable)
             except Exception as exc:
                 logger.error(f"EvolutionEngine pattern_threshold error: {exc}")
 
@@ -171,7 +190,7 @@ class EvolutionEngine:
                 weight_map = self._meta.adjust_weights()
                 if weight_map:
                     self._fusion.update_weights(weight_map)
-                    logger.info(f"🎚️ EvolutionEngine: agent weights updated → {weight_map}")
+                    logger.info(f"🎚️ EvolutionEngine: agent weights updated → {{weight_map}}")
             except Exception as exc:
                 logger.error(f"EvolutionEngine weight_update error: {exc}")
 
@@ -212,6 +231,11 @@ class EvolutionEngine:
                 self._confluence_adapter.dump_state(),
                 "shutdown",
             )
+            experience_db.save_param(
+                "strategy_evolver_trade_count",
+                self._strategy_evolver.trade_count,
+                "shutdown",
+            )
             logger.info("💾 EvolutionEngine: state saved on shutdown")
         except Exception as exc:
             logger.error(f"EvolutionEngine.shutdown error: {exc}")
@@ -241,16 +265,16 @@ class EvolutionEngine:
                 if self._fusion._threshold < safe_threshold:
                     self._fusion._threshold = safe_threshold
                     logger.warning(
-                        f"🔴 DRAWDOWN CRITICAL ({max_dd:.1%}) → safe mode, "
-                        f"threshold={safe_threshold:.3f}"
+                        f"🔴 DRAWDOWN CRITICAL ({{max_dd:.1%}}) → safe mode, "
+                        f"threshold={{safe_threshold:.3f}}"
                     )
             elif max_dd >= _DRAWDOWN_WARN:
                 warn_threshold = float(np.clip(current_threshold + 0.05, 0.30, 0.90))
                 if self._fusion._threshold < warn_threshold:
                     self._fusion._threshold = warn_threshold
                     logger.warning(
-                        f"🟡 DRAWDOWN WARNING ({max_dd:.1%}) → threshold raised to "
-                        f"{warn_threshold:.3f}"
+                        f"🟡 DRAWDOWN WARNING ({{max_dd:.1%}}) → threshold raised to "
+                        f"{{warn_threshold:.3f}}"
                     )
         except Exception as exc:
             logger.debug(f"_check_drawdown error: {exc}")
@@ -281,8 +305,8 @@ class EvolutionEngine:
 
             if new_threshold != current:
                 logger.info(
-                    f"🔧 Auto-tune: win_rate={win_rate:.1%} → "
-                    f"threshold {current:.3f} → {new_threshold:.3f}"
+                    f"🔧 Auto-tune: win_rate={{win_rate:.1%}} → "
+                    f"threshold {{current:.3f}} → {{new_threshold:.3f}}"
                 )
 
             self._fusion._threshold = new_threshold
@@ -300,6 +324,11 @@ class EvolutionEngine:
             experience_db.save_param(
                 "confluence_tf_performance",
                 self._confluence_adapter.dump_state(),
+                "periodic",
+            )
+            experience_db.save_param(
+                "strategy_evolver_trade_count",
+                self._strategy_evolver.trade_count,
                 "periodic",
             )
             logger.info("💾 EvolutionEngine: periodic state save complete")
