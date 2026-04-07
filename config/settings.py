@@ -210,3 +210,81 @@ if TRAINING_MODE:
     NON_OPTIMAL_HOUR_PENALTY = TRAINING_NON_OPTIMAL_HOUR_PENALTY
     SIGNAL_COOLDOWN_BY_TF = TRAINING_SIGNAL_COOLDOWN_BY_TF
     MAX_OPEN_POSITIONS = TRAINING_MAX_OPEN_POSITIONS
+
+# ============================================================
+# V18 — REINFORCEMENT LEARNING
+# ============================================================
+
+RL_LEARNING_RATE = 3e-4         # PPO actor-critic learning rate
+RL_GAMMA = 0.99                 # discount factor
+RL_GAE_LAMBDA = 0.95            # GAE lambda for advantage estimation
+RL_CLIP_EPSILON = 0.2           # PPO clipping epsilon
+RL_BATCH_SIZE = 64              # mini-batch size for PPO updates
+RL_REPLAY_BUFFER_SIZE = 10_000  # prioritized replay buffer capacity
+RL_N_FEATURES = 12              # state space dimension
+RL_N_ACTIONS = 8                # action space size
+RL_PPO_EPOCHS = 4               # optimisation epochs per PPO update
+RL_TRAIN_OFFLINE = True         # train offline on historical sim episodes
+RL_INFERENCE_ENABLED = True     # use PPO for live inference suggestions
+
+# ============================================================
+# V18 — META-LEARNING
+# ============================================================
+
+MAML_LEARNING_RATE = 0.01       # outer loop meta-learning rate
+MAML_ADAPT_LEARNING_RATE = 0.1  # inner loop adaptation rate
+MAML_N_SHOTS = 10               # few-shot adaptation: trades per regime
+HYPEROPT_BUDGET = 200           # maximum hyperparameter evaluations
+HYPEROPT_GAMMA = 0.25           # TPE good/bad fraction
+DRIFT_DETECTION_THRESHOLD = 50.0  # Page-Hinkley threshold
+DRIFT_RETRAIN_COOLDOWN = 3600   # min seconds between re-trains
+LR_SCHEDULER_T0 = 50            # cosine annealing initial period
+LR_SCHEDULER_T_MULT = 2         # restart period multiplier
+
+# ============================================================
+# V18 — RISK INSTITUTIONAL
+# ============================================================
+
+VAR_CONFIDENCE_LEVELS = (0.95, 0.99)
+VAR_MONTE_CARLO_SIMS = 10_000
+CVAR_CONFIDENCE = 0.95
+MAX_HHI = 0.40
+MAX_CORRELATION_EXPOSURE = 0.80
+
+KILL_L1_POSITION_LOSS_PCT = 0.05
+KILL_L2_DAILY_LOSS_PCT = 0.03
+KILL_L3_DRAWDOWN_PCT = 0.12
+KILL_L4_CORRELATION = 0.85
+KILL_L5_VOL_MULTIPLIER = 4.0
+
+MARGIN_WARNING_PCT = 0.70
+MARGIN_CRITICAL_PCT = 0.85
+MARGIN_LIQ_DISTANCE_MIN = 0.05
+
+# ============================================================
+# V18 — COORDINATION
+# ============================================================
+
+CONSENSUS_ROUNDS = 3
+CONSENSUS_CONTRARIAN_THRESHOLD = 0.70
+CONSENSUS_CONTRARIAN_PENALTY = 0.30
+SUPERVISOR_ERROR_THRESHOLD = 0.30
+SUPERVISOR_RECOVERY_COOLDOWN = 300
+PRIORITY_CRITICAL = 0
+PRIORITY_HIGH = 1
+PRIORITY_MEDIUM = 2
+PRIORITY_LOW = 3
+
+# ============================================================
+# V18 — BACKTESTING
+# ============================================================
+
+BACKTEST_N_SIMS = 1000
+BACKTEST_CONFIDENCE = 0.95
+WALK_FORWARD_FOLDS = 5
+WALK_FORWARD_TRAIN_PCT = 0.70
+BACKTEST_MIN_SHARPE = 0.5
+BACKTEST_MIN_WIN_RATE = 0.45
+BACKTEST_MAX_DRAWDOWN = 0.20
+BACKTEST_VALIDATION_INTERVAL = 7200
+BACKTEST_MIN_TRADES = 20
