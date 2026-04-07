@@ -158,6 +158,7 @@ class ConsensusProtocol:
                 for name in debated:
                     debated[name]["score"] *= (1 - self.contrarian_penalty)
                     debated[name]["contrarian_flag"] = True
+                    debated[name]["contrarian_penalty_applied"] = self.contrarian_penalty
 
         # Peer adjustment: reward agents that agree with consensus
         for name, prop in debated.items():

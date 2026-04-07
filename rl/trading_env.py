@@ -95,6 +95,7 @@ class TradingEnv:
         self._position = Position()
         self._done: bool = False
         self._history: List[float] = []
+        self._last_obs: Optional[np.ndarray] = None  # cached last valid observation
 
         # Observation/action space metadata (Gymnasium-compatible)
         self.observation_space = _SpaceSpec(shape=(N_FEATURES,),
@@ -128,8 +129,10 @@ class TradingEnv:
         self._position = Position()
         self._done = False
         self._history = [self.initial_balance]
+        self._last_obs = None
 
         obs = self._get_observation()
+        self._last_obs = obs
         return obs, {}
 
     def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
@@ -145,7 +148,8 @@ class TradingEnv:
         (observation, reward, terminated, truncated, info)
         """
         if self._done:
-            obs = self._get_observation()
+            # Return the last cached observation when episode is already done
+            obs = self._last_obs if self._last_obs is not None else np.zeros(N_FEATURES, dtype=np.float32)
             return obs, 0.0, True, False, {}
 
         prev_balance = self._balance
@@ -172,6 +176,7 @@ class TradingEnv:
             self._done = True
 
         obs = self._get_observation()
+        self._last_obs = obs  # cache observation for done-state returns
         info = {
             "balance": self._balance,
             "step": self._t,
