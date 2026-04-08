@@ -15,6 +15,12 @@ from config.settings import FUSION_THRESHOLD_DEFAULT, FUSION_AGENT_WEIGHTS
 
 logger = logging.getLogger("DecisionFusion")
 
+try:
+    from coordination.consensus_protocol import ConsensusProtocol
+    _CONSENSUS_AVAILABLE = True
+except ImportError:
+    _CONSENSUS_AVAILABLE = False
+
 # Sniper calibration constants
 _SNIPER_MIN_DIRECTION_AGREEMENT = 0.60   # minimum fraction of directional agents that must agree
 _SNIPER_MIN_AGREEING_TIMEFRAMES = 2      # minimum timeframes agreeing for MTF confluence
@@ -85,6 +91,14 @@ class DecisionFusion:
         self._threshold = threshold
         self._threshold_history: List[float] = []
         self._decision_log: List[FusionResult] = []
+
+        # V18 Consensus Protocol (3-round)
+        self._consensus: Optional["ConsensusProtocol"] = None
+        if _CONSENSUS_AVAILABLE:
+            try:
+                self._consensus = ConsensusProtocol()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Weight management
@@ -219,6 +233,22 @@ class DecisionFusion:
 
         final_score = (weighted_score / total_weight if total_weight > 0 else 0.0) + consensus_bonus
         final_score = float(np.clip(final_score, 0.0, 1.0))
+
+        # V18: Blend with 3-round Consensus Protocol when enough agents are present
+        if self._consensus is not None and len(agent_results) >= 4:
+            try:
+                consensus_result = self._consensus.full_consensus(agent_results, self._weights)
+                consensus_score = float(consensus_result.get("score", consensus_result.get("final_score", final_score)))
+                # 70% weighted voting (proven) + 30% consensus (new)
+                final_score = float(np.clip(
+                    0.70 * final_score + 0.30 * consensus_score, 0.0, 1.0
+                ))
+                reasoning.append(
+                    f"CONSENSUS_3R: blended score={final_score:.3f} "
+                    f"(consensus_level={consensus_result.get('consensus_level', '?')})"
+                )
+            except Exception as e:
+                reasoning.append(f"CONSENSUS_3R: fallback to 1-round (error: {e})")
 
         # --- Regime-aware threshold adjustment ---
         effective_threshold = self._threshold * _REGIME_THRESHOLD_MULTIPLIERS.get(regime, 1.0)

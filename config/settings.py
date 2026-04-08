@@ -150,11 +150,16 @@ META_WEIGHT_DECAY = 0.95      # Exponential decay for old samples
 FUSION_THRESHOLD_DEFAULT = 0.55  # Raised from 0.30: sniper calibration — fewer but higher-quality signals
 FUSION_AGENT_WEIGHTS = {
     "regime": 0.15,
-    "pattern": 0.30,       # unchanged — pattern detection is the core signal source
-    "confluence": 0.30,    # raised from 0.25 — MTF confluence is the key filter
-    "risk": 0.15,          # unchanged
-    "strategy": 0.05,      # reduced from 0.15 — mutated strategies are noisy
+    "pattern": 0.25,       # slightly reduced to accommodate V18 agents
+    "confluence": 0.25,    # slightly reduced to accommodate V18 agents
+    "risk": 0.12,          # slightly reduced to accommodate V18 agents
+    "strategy": 0.05,      # reduced — mutated strategies are noisy
     "meta": 0.05,          # unchanged
+    # V18 agents (active only when available)
+    "orderflow": 0.05,     # order flow / microstructure signal
+    "sentiment": 0.03,     # funding rate / OI / L-S ratio proxy
+    "correlation": 0.03,   # cross-asset correlation & divergence
+    "contrarian": 0.02,    # devil's advocate — penalises groupthink
 }
 
 # ============================================================
