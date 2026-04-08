@@ -46,6 +46,12 @@ class EventProcessor:
         fusion: DecisionFusion,
         execution: ExecutionEngine,
         on_signal: Optional[Callable] = None,
+        # V18 optional agents (graceful degradation)
+        orderflow_agent=None,
+        sentiment_agent=None,
+        correlation_agent=None,
+        contrarian_agent=None,
+        kill_switch=None,
     ):
         self.pattern = pattern_agent
         self.regime = regime_agent
@@ -56,6 +62,13 @@ class EventProcessor:
         self.fusion = fusion
         self.execution = execution
         self.on_signal = on_signal  # callback for notifications
+
+        # V18 optional agents
+        self.orderflow_agent = orderflow_agent
+        self.sentiment_agent = sentiment_agent
+        self.correlation_agent = correlation_agent
+        self.contrarian_agent = contrarian_agent
+        self.kill_switch = kill_switch
 
         self._last_signal_time: Dict[str, float] = {}
         self._processed_count = 0
@@ -81,6 +94,9 @@ class EventProcessor:
             "high_correlation": 0,
             "unfavorable_regime": 0,
             "weak_confluence": 0,
+            # V18 kill switch reasons
+            "kill_switch_killed": 0,
+            "kill_switch_safe_mode": 0,
         }
 
     # ------------------------------------------------------------------
@@ -195,6 +211,34 @@ class EventProcessor:
             logger.info(f"⛔ {symbol}/{interval} SKIP: risk_blocked reason={risk_reason}")
             return None
 
+        # Guard: V18 Kill Switch check
+        if self.kill_switch is not None:
+            try:
+                exec_stats = self.execution.get_stats()
+                balance = exec_stats.get("balance", exec_stats.get("initial_balance", 1000.0))
+                initial_bal = exec_stats.get("initial_balance", balance)
+                portfolio_state = {
+                    "balance": balance,
+                    "initial_balance": initial_bal,
+                    "peak_balance": balance,  # simplified: use current balance as peak
+                    "daily_pnl": exec_stats.get("daily_pnl", 0),
+                    "positions": [{"symbol": p.symbol, "pnl_pct": 0} for p in open_pos],
+                    "market_vol": 0,      # not tracked at this layer; L5 trip unlikely
+                    "baseline_vol": 0.01,
+                    "avg_correlation": 0,
+                }
+                self.kill_switch.check_all_levels(portfolio_state)
+                if self.kill_switch.is_killed():
+                    self._skip("kill_switch_killed")
+                    logger.warning(f"🔴 {symbol}/{interval} SKIP: Kill Switch KILLED")
+                    return None
+                if self.kill_switch.is_safe_mode():
+                    self._skip("kill_switch_safe_mode")
+                    logger.warning(f"🟡 {symbol}/{interval} SKIP: Kill Switch SAFE_MODE")
+                    return None
+            except Exception as e:
+                logger.debug(f"kill_switch check error: {e}")
+
         df = data_store.get_df(symbol, interval)
         if df is None or len(df) < 50:
             self._skip("insufficient_data")
@@ -268,6 +312,44 @@ class EventProcessor:
         meta_result = self.meta.safe_analyse(symbol, interval, df, agent_results)
         if meta_result is not None:
             agent_results["meta"] = meta_result
+
+        # ---- V18 agents (graceful degradation) ----
+        if self.orderflow_agent is not None:
+            try:
+                of_result = self.orderflow_agent.safe_analyse(symbol, interval, df)
+                if of_result is not None:
+                    agent_results["orderflow"] = of_result
+            except Exception as e:
+                logger.debug(f"orderflow_agent error: {e}")
+
+        if self.sentiment_agent is not None:
+            try:
+                sent_result = self.sentiment_agent.safe_analyse(symbol, interval, df)
+                if sent_result is not None:
+                    agent_results["sentiment"] = sent_result
+            except Exception as e:
+                logger.debug(f"sentiment_agent error: {e}")
+
+        if self.correlation_agent is not None:
+            try:
+                corr_result = self.correlation_agent.safe_analyse(symbol, interval, df, df_btc)
+                if corr_result is not None:
+                    agent_results["correlation"] = corr_result
+            except Exception as e:
+                logger.debug(f"correlation_agent error: {e}")
+
+        # Contrarian agent runs LAST — it needs to see consensus direction
+        if self.contrarian_agent is not None:
+            try:
+                contr_result = self.contrarian_agent.safe_analyse(
+                    symbol, interval, df,
+                    consensus_direction=direction_hint,
+                    agent_results=agent_results,
+                )
+                if contr_result is not None:
+                    agent_results["contrarian"] = contr_result
+            except Exception as e:
+                logger.debug(f"contrarian_agent error: {e}")
 
         if not agent_results:
             self._skip("no_agent_results")

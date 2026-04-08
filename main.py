@@ -43,6 +43,50 @@ from agents.risk_agent import RiskAgent
 from agents.strategy_agent import StrategyAgent
 from agents.meta_agent import MetaAgent
 
+# ---- V18 agents (graceful degradation) ----
+try:
+    from agents.orderflow_agent import OrderFlowAgent
+    _ORDERFLOW_AVAILABLE = True
+except ImportError:
+    _ORDERFLOW_AVAILABLE = False
+
+try:
+    from agents.sentiment_agent import SentimentAgent
+    _SENTIMENT_AVAILABLE = True
+except ImportError:
+    _SENTIMENT_AVAILABLE = False
+
+try:
+    from agents.correlation_agent import CorrelationAgent
+    _CORRELATION_AVAILABLE = True
+except ImportError:
+    _CORRELATION_AVAILABLE = False
+
+try:
+    from agents.contrarian_agent import ContrarianAgent
+    _CONTRARIAN_AVAILABLE = True
+except ImportError:
+    _CONTRARIAN_AVAILABLE = False
+
+# ---- V18 coordination (graceful degradation) ----
+try:
+    from coordination.state_machine import StateMachine as _StateMachine
+    from coordination.state_machine import (
+        STATE_TRAINING, STATE_SNIPER, STATE_SAFE_MODE, STATE_KILLED,
+    )
+    _STATE_MACHINE_AVAILABLE = True
+except ImportError:
+    _STATE_MACHINE_AVAILABLE = False
+
+try:
+    from coordination.message_bus import (
+        get_message_bus,
+        TOPIC_SIGNAL_NEW, TOPIC_TRADE_OPEN, TOPIC_TRADE_CLOSE, TOPIC_REGIME_CHANGE,
+    )
+    _MSG_BUS_AVAILABLE = True
+except ImportError:
+    _MSG_BUS_AVAILABLE = False
+
 # ---- Engine ----
 from engine.decision_fusion import DecisionFusion
 from engine.execution import ExecutionEngine
@@ -171,7 +215,7 @@ def preload_historical(symbols, label: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def build_system():
-    """Instantiate and wire all V17 components.
+    """Instantiate and wire all V17 + V18 components.
 
     Returns
     -------
@@ -185,14 +229,55 @@ def build_system():
     pattern          : PatternAgent
     decision_context : Dict[str, Dict[str, Any]] — runtime signal context cache
     """
-    logger.info("🔧 Building V17 agent system...")
+    logger.info("🔧 Building V17+V18 agent system...")
 
     pattern = PatternAgent()
     regime = RegimeAgent()
     confluence = ConfluenceAgent()
     risk = RiskAgent()
     strategy = StrategyAgent()
-    meta = MetaAgent(agents=[pattern, regime, confluence, risk, strategy])
+
+    # ---- V18 agents (graceful degradation) ----
+    orderflow = None
+    sentiment = None
+    correlation = None
+    contrarian = None
+
+    if _ORDERFLOW_AVAILABLE:
+        try:
+            orderflow = OrderFlowAgent()
+            logger.info("🔮 V18 OrderFlowAgent: instantiated")
+        except Exception as e:
+            logger.warning(f"OrderFlowAgent init error: {e}")
+
+    if _SENTIMENT_AVAILABLE:
+        try:
+            sentiment = SentimentAgent()
+            logger.info("🔮 V18 SentimentAgent: instantiated")
+        except Exception as e:
+            logger.warning(f"SentimentAgent init error: {e}")
+
+    if _CORRELATION_AVAILABLE:
+        try:
+            correlation = CorrelationAgent()
+            logger.info("🔮 V18 CorrelationAgent: instantiated")
+        except Exception as e:
+            logger.warning(f"CorrelationAgent init error: {e}")
+
+    if _CONTRARIAN_AVAILABLE:
+        try:
+            contrarian = ContrarianAgent()
+            logger.info("🔮 V18 ContrarianAgent: instantiated")
+        except Exception as e:
+            logger.warning(f"ContrarianAgent init error: {e}")
+
+    # Wire all agents (V17 + V18) into MetaAgent
+    all_agents = [pattern, regime, confluence, risk, strategy]
+    for v18_agent in [orderflow, sentiment, correlation, contrarian]:
+        if v18_agent is not None:
+            all_agents.append(v18_agent)
+
+    meta = MetaAgent(agents=all_agents)
 
     fusion = DecisionFusion()
     execution = ExecutionEngine(paper_trading=PAPER_TRADING, initial_balance=ACCOUNT_BALANCE)
@@ -248,6 +333,18 @@ def build_system():
         except Exception as e:
             logger.error(f"Decision context cache error: {e}")
 
+        # V18: Publish signal.new on MessageBus
+        try:
+            if _MSG_BUS_AVAILABLE:
+                get_message_bus().publish(TOPIC_SIGNAL_NEW, {
+                    "symbol": fusion_result.symbol,
+                    "interval": fusion_result.interval,
+                    "decision": fusion_result.decision,
+                    "score": fusion_result.final_score,
+                })
+        except Exception:
+            pass
+
     processor = EventProcessor(
         pattern_agent=pattern,
         regime_agent=regime,
@@ -258,9 +355,13 @@ def build_system():
         fusion=fusion,
         execution=execution,
         on_signal=on_signal,
+        orderflow_agent=orderflow,
+        sentiment_agent=sentiment,
+        correlation_agent=correlation,
+        contrarian_agent=contrarian,
     )
 
-    logger.info("✅ V17 agent system ready")
+    logger.info("✅ V17+V18 agent system ready")
     return processor, meta, tracker, execution, risk, strategy, confluence, pattern, decision_context
 
 
@@ -392,6 +493,17 @@ def _position_monitor(
                     except Exception as e:
                         logger.error(f"evolution_engine.on_trade_close error: {e}")
 
+                    # V18: Publish trade.close event on MessageBus
+                    try:
+                        if _MSG_BUS_AVAILABLE:
+                            get_message_bus().publish(TOPIC_TRADE_CLOSE, {
+                                "symbol": closed.symbol,
+                                "pnl": closed.pnl,
+                                "strategy": closed.strategy,
+                            })
+                    except Exception:
+                        pass
+
         except Exception as e:
             logger.debug(f"position_monitor error: {e}")
 
@@ -500,9 +612,9 @@ def _report_loop(processor: EventProcessor, tracker: PerformanceTracker,
 
 def main():
     logger.info("=" * 60)
-    logger.info("🤖 V17 AGENTIC AI TRADING SYSTEM")
+    logger.info("🤖 V18 AGENTIC AI TRADING SYSTEM — ECOSISTEMA VIVENTE")
     logger.info("=" * 60)
-    logger.info("🛡️ ACTIVE MODULES:")
+    logger.info("🛡️ V17 ACTIVE MODULES:")
     logger.info("   - Regime Agent (GaussianMixture): ON")
     logger.info("   - Pattern Agent (V16 detectors + auto-calibration): ON")
     logger.info("   - Confluence Agent (Probabilistic MTF): ON")
@@ -545,8 +657,27 @@ def main():
                 logger.info(f"📥 Preloading history for {len(hg_extra)} HG-only symbols...")
                 preload_historical(hg_extra, "HG")
 
-        # ---- Build V17 system ----
+        # ---- Build V17+V18 system ----
         processor, meta, tracker, execution, risk_agent, strategy_agent, confluence_agent, pattern_agent, decision_context = build_system()
+
+        # ---- V18: Instantiate State Machine ----
+        state_machine = None
+        if _STATE_MACHINE_AVAILABLE:
+            try:
+                state_machine = _StateMachine()
+                state_machine.transition("boot_complete")  # INITIALIZING → TRAINING
+                logger.info(f"🔄 V18 StateMachine: state={state_machine.current_state()}")
+            except Exception as e:
+                logger.warning(f"StateMachine init error: {e}")
+
+        # ---- V18: Instantiate MessageBus ----
+        msg_bus = None
+        if _MSG_BUS_AVAILABLE:
+            try:
+                msg_bus = get_message_bus()
+                logger.info("📡 V18 MessageBus: started")
+            except Exception as e:
+                logger.warning(f"MessageBus init error: {e}")
 
         # ---- Build & start Evolution Engine ----
         evolution_engine = EvolutionEngine(
@@ -559,6 +690,15 @@ def main():
             pattern_agent=pattern_agent,
         )
         evolution_engine.startup()
+
+        # ---- V18: Wire KillSwitch from EvolutionEngine to EventProcessor ----
+        try:
+            if evolution_engine._kill_switch is not None:
+                processor.kill_switch = evolution_engine._kill_switch
+                logger.info("🔴 V18 KillSwitch: wired to EventProcessor")
+        except Exception as e:
+            logger.warning(f"KillSwitch wiring error: {e}")
+
         logger.info("🧬 Evolution Engine started")
         logger.info("   - Loop #1 (MetaAgent → Fusion): ON")
         logger.info("   - Loop #2 (Tracker → RiskAgent): ON")
@@ -566,6 +706,17 @@ def main():
         logger.info("   - Loop #5 (Strategy evolution): ON")
         logger.info("   - Loop #6 (MetaAgent persistence): ON")
         logger.info("   - Loop #7 (Confluence TF learning): ON")
+        logger.info("🚀 V18 MODULES:")
+        logger.info("   - V18 Order Flow Agent: " + ("ON" if processor.orderflow_agent else "OFF"))
+        logger.info("   - V18 Sentiment Agent: " + ("ON" if processor.sentiment_agent else "OFF"))
+        logger.info("   - V18 Correlation Agent: " + ("ON" if processor.correlation_agent else "OFF"))
+        logger.info("   - V18 Contrarian Agent: " + ("ON" if processor.contrarian_agent else "OFF"))
+        logger.info("   - V18 Consensus Protocol (3-round): " + ("ON" if processor.fusion._consensus else "OFF"))
+        logger.info("   - V18 State Machine: " + ("ON" if state_machine else "OFF"))
+        logger.info("   - V18 Message Bus: " + ("ON" if msg_bus else "OFF"))
+        logger.info("   - V18 HMM Regime: " + ("ON" if (evolution_engine._hmm is not None) else "OFF"))
+        logger.info("   - V18 PPO RL Agent: " + ("ON" if (evolution_engine._ppo is not None) else "OFF"))
+        logger.info("   - V18 Kill Switch (5-level): " + ("ON" if (evolution_engine._kill_switch is not None) else "OFF"))
 
         # ---- Wire WebSocket callbacks ----
         all_symbols = list(set(symbols_whitelist + (symbols_hg_all if HG_MONITOR_ALL else [])))
@@ -626,7 +777,7 @@ def main():
         ))
 
         logger.info("=" * 60)
-        logger.info("🚀 V17 SYSTEM OPERATIONAL — Press Ctrl+C to stop")
+        logger.info("🚀 V18 SYSTEM OPERATIONAL — Press Ctrl+C to stop")
         logger.info("=" * 60)
 
         # ---- Main loop ----
@@ -658,9 +809,16 @@ def main():
                         _cfg.NON_OPTIMAL_HOUR_PENALTY = SNIPER_NON_OPTIMAL_HOUR_PENALTY
                         _cfg.SIGNAL_COOLDOWN_BY_TF = SNIPER_SIGNAL_COOLDOWN_BY_TF
                         _cfg.MAX_OPEN_POSITIONS = SNIPER_MAX_OPEN_POSITIONS
+                        # V18: Transition state machine to SNIPER
+                        try:
+                            if state_machine is not None:
+                                state_machine.transition("training_complete")
+                                logger.info(f"🔄 StateMachine → {state_machine.current_state()}")
+                        except Exception as _sm_err:
+                            logger.debug(f"StateMachine training_complete error: {_sm_err}")
                         try:
                             send_message(
-                                f"🎓 *V17 TRAINING COMPLETATO*\n\n"
+                                f"🎓 *V18 TRAINING COMPLETATO*\n\n"
                                 f"✅ {completed} trade completati\n"
                                 f"🎯 Passaggio a *Sniper Mode* — soglie alzate:\n"
                                 f"  • Fusion threshold: {SNIPER_FUSION_THRESHOLD}\n"
@@ -672,6 +830,23 @@ def main():
                             logger.error(f"Sniper Mode notification error: {_notify_err}")
                 except Exception as _switch_err:
                     logger.error(f"Training→Sniper auto-switch error: {_switch_err}")
+
+            # V18: Check state machine — if KILLED or SAFE_MODE, enforce restrictions
+            try:
+                if state_machine is not None:
+                    sm_state = state_machine.current_state()
+                    if sm_state == STATE_KILLED:
+                        # Ensure kill switch is also activated
+                        if evolution_engine._kill_switch is not None:
+                            if not evolution_engine._kill_switch.is_killed():
+                                logger.warning("🔴 StateMachine KILLED state active")
+                    elif sm_state == STATE_SAFE_MODE:
+                        # Raise fusion threshold to discourage new trades
+                        if processor.fusion._threshold < 0.75:
+                            processor.fusion._threshold = 0.75
+                            logger.warning("🟡 StateMachine SAFE_MODE: threshold raised to 0.75")
+            except Exception as _sm_err:
+                logger.debug(f"StateMachine check error: {_sm_err}")
 
             # Evolution tick every 30 minutes (handles weight adjust, auto-tune, state save)
             if time.time() - _last_evolution_tick >= 1800:

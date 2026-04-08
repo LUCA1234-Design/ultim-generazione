@@ -163,6 +163,7 @@ class EvolutionEngine:
         self._last_v18_tick: float = 0.0
         self._last_drift_retrain: float = 0.0
         self._last_backtest_validation: float = 0.0
+        self._last_hmm_fit: float = 0.0   # V18: track last HMM re-fit time
 
         # Thread safety lock
         self._lock = threading.Lock()
@@ -234,6 +235,8 @@ class EvolutionEngine:
 
         # Closed trades buffer for backtest validation (Loop #15)
         self._closed_trades_buffer: list = []
+        # PPO experience buffer for RL training
+        self._ppo_experience_buffer: list = []
 
         v18_modules = sum([
             self._hmm is not None,
@@ -292,6 +295,21 @@ class EvolutionEngine:
                 )
         except Exception as exc:
             logger.debug(f"EvolutionEngine.startup strategy trade_count restore error: {exc}")
+
+        # Loop #9: Fit HMM on BTCUSDT 1h data (initial fit on startup)
+        try:
+            if self._hmm is not None:
+                from data import data_store
+                df_btc = data_store.get_df("BTCUSDT", "1h")
+                if df_btc is not None and len(df_btc) >= 100:
+                    fitted = self._hmm.fit(df_btc)
+                    if fitted:
+                        self._last_hmm_fit = time.time()
+                        logger.info("🔮 EvolutionEngine: HMM fitted on BTCUSDT 1h data")
+                    else:
+                        logger.debug("EvolutionEngine: HMM fit returned False (insufficient data at startup)")
+        except Exception as exc:
+            logger.debug(f"EvolutionEngine HMM fit error: {exc}")
 
     def on_trade_close(
         self,
@@ -411,6 +429,39 @@ class EvolutionEngine:
             except Exception as exc:
                 logger.debug(f"EvolutionEngine trade_buffer error: {exc}")
 
+            # Loop #8: PPO experience collection
+            try:
+                if self._ppo is not None:
+                    from config.settings import RL_N_FEATURES  # state vector dimension = 12
+                    # Build a simple state vector (RL_N_FEATURES features)
+                    state = np.zeros(RL_N_FEATURES)
+                    state[0] = float(np.clip(pnl_value / 100.0, -1.0, 1.0))  # normalised pnl
+                    state[1] = 1.0 if was_profitable else 0.0                  # win flag
+                    n_closed = len(self._closed_trades_buffer)
+                    state[2] = float(np.clip(n_closed / 200.0, 0.0, 1.0))     # experience level
+
+                    # Use PPO policy to select actual action and get real log_prob
+                    # PPO actions: 0=hold, 1-3=short(small/med/large), 4-7=long(small/med/large)
+                    action, log_prob = self._ppo.select_action(state)
+                    reward = float(np.clip(pnl_value / 10.0, -1.0, 1.0))  # normalised reward
+                    done = 1.0   # each trade is a terminal episode step
+                    value = self._ppo.get_value(state)
+
+                    self._ppo_experience_buffer.append({
+                        "state": state,
+                        "action": action,
+                        "log_prob": log_prob,
+                        "reward": reward,
+                        "value": value,
+                        "done": done,
+                        "next_state": state.copy(),
+                    })
+                    # Keep last 1000 experiences (sufficient for ~20 PPO batches of 50)
+                    if len(self._ppo_experience_buffer) > 1000:
+                        self._ppo_experience_buffer = self._ppo_experience_buffer[-1000:]
+            except Exception as exc:
+                logger.debug(f"Loop#8 RL experience error: {exc}")
+
     def tick(self) -> None:
         """Periodic evolution step — call every ~30 minutes from main loop.
 
@@ -453,6 +504,19 @@ class EvolutionEngine:
             # Drawdown circuit breaker (V17)
             self._check_drawdown()
 
+            # Loop #9: Re-fit HMM every 2 hours with updated data
+            if self._hmm is not None and (now - self._last_hmm_fit) >= 7200:
+                try:
+                    from data import data_store
+                    df_btc = data_store.get_df("BTCUSDT", "1h")
+                    if df_btc is not None and len(df_btc) >= 100:
+                        fitted = self._hmm.fit(df_btc)
+                        if fitted:
+                            self._last_hmm_fit = now
+                            logger.info("🔮 HMM re-fitted on updated BTCUSDT data")
+                except Exception as exc:
+                    logger.debug(f"HMM re-fit error: {exc}")
+
             # ---- V18 periodic loops (every 5 min) -------------------------
             if now - self._last_v18_tick >= _V18_TICK_INTERVAL_SEC:
                 self._run_v18_loops()
@@ -466,19 +530,42 @@ class EvolutionEngine:
 
     def _run_v18_loops(self) -> None:
         """Execute all V18 periodic feedback loops."""
-        # Loop #8: RL policy — log current action probabilities
+        # Loop #8: RL policy — trigger training update if enough experience
         try:
-            if self._ppo is not None and self._ppo._is_trained:
-                logger.debug("EvolutionEngine Loop#8: RL policy active")
+            if self._ppo is not None and len(self._ppo_experience_buffer) >= 50:
+                # Build a single trajectory from buffered experiences
+                buf = self._ppo_experience_buffer[-50:]
+                trajectory = {
+                    "states": np.vstack([e["state"] for e in buf]),
+                    "actions": np.array([e["action"] for e in buf]),
+                    "log_probs": np.array([e["log_prob"] for e in buf]),
+                    "rewards": np.array([e["reward"] for e in buf]),
+                    "values": np.array([e["value"] for e in buf]),
+                    "dones": np.array([e["done"] for e in buf]),
+                }
+                stats = self._ppo.update([trajectory])
+                if stats:
+                    logger.info(
+                        f"🤖 Loop#8 PPO update: actor_loss={stats.get('actor_loss', 0):.4f}, "
+                        f"entropy={stats.get('entropy', 0):.4f}, "
+                        f"n_samples={stats.get('n_samples', 0)}"
+                    )
         except Exception as exc:
             logger.debug(f"Loop#8 RL error: {exc}")
 
-        # Loop #9: HMM — log transition matrix periodically
+        # Loop #9: HMM — log regime probabilities
         try:
             if self._hmm is not None and self._hmm._is_fitted:
-                transitions = self._hmm.get_transition_summary()
-                if transitions:
-                    logger.debug(f"EvolutionEngine Loop#9 HMM transitions: {transitions}")
+                from data import data_store
+                df_btc = data_store.get_df("BTCUSDT", "1h")
+                if df_btc is not None and len(df_btc) >= 50:
+                    regime_probs = self._hmm.get_regime_probs(df_btc)
+                    if regime_probs:
+                        current_regime = self._hmm.predict_regime(df_btc)
+                        logger.info(
+                            f"🔮 Loop#9 HMM regime={current_regime}, "
+                            f"probs={{{', '.join(f'{k}:{v:.2f}' for k, v in regime_probs.items())}}}"
+                        )
         except Exception as exc:
             logger.debug(f"Loop#9 HMM error: {exc}")
 
