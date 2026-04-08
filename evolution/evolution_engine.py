@@ -432,21 +432,19 @@ class EvolutionEngine:
             # Loop #8: PPO experience collection
             try:
                 if self._ppo is not None:
-                    # Build a simple state vector (RL_N_FEATURES = 12)
-                    state = np.zeros(12)
+                    from config.settings import RL_N_FEATURES  # state vector dimension = 12
+                    # Build a simple state vector (RL_N_FEATURES features)
+                    state = np.zeros(RL_N_FEATURES)
                     state[0] = float(np.clip(pnl_value / 100.0, -1.0, 1.0))  # normalised pnl
                     state[1] = 1.0 if was_profitable else 0.0                  # win flag
                     n_closed = len(self._closed_trades_buffer)
                     state[2] = float(np.clip(n_closed / 200.0, 0.0, 1.0))     # experience level
 
-                    # Action: buy=long(4), sell=short(5), medium sizing if win
-                    action = 4 if was_profitable else 5
-                    reward = float(np.clip(pnl_value / 10.0, -1.0, 1.0))     # normalised reward
-                    next_state = state.copy()
-                    done = 1.0  # each trade is a terminal episode step
-
-                    # Select action log_prob (approximate with uniform prior)
-                    log_prob = float(np.log(1.0 / max(self._ppo.n_actions, 1) + 1e-10))
+                    # Use PPO policy to select actual action and get real log_prob
+                    # PPO actions: 0=hold, 1-3=short(small/med/large), 4-7=long(small/med/large)
+                    action, log_prob = self._ppo.select_action(state)
+                    reward = float(np.clip(pnl_value / 10.0, -1.0, 1.0))  # normalised reward
+                    done = 1.0   # each trade is a terminal episode step
                     value = self._ppo.get_value(state)
 
                     self._ppo_experience_buffer.append({
@@ -456,9 +454,9 @@ class EvolutionEngine:
                         "reward": reward,
                         "value": value,
                         "done": done,
-                        "next_state": next_state,
+                        "next_state": state.copy(),
                     })
-                    # Keep last 1000 experiences
+                    # Keep last 1000 experiences (sufficient for ~20 PPO batches of 50)
                     if len(self._ppo_experience_buffer) > 1000:
                         self._ppo_experience_buffer = self._ppo_experience_buffer[-1000:]
             except Exception as exc:

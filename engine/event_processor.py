@@ -215,13 +215,15 @@ class EventProcessor:
         if self.kill_switch is not None:
             try:
                 exec_stats = self.execution.get_stats()
+                balance = exec_stats.get("balance", exec_stats.get("initial_balance", 1000.0))
+                initial_bal = exec_stats.get("initial_balance", balance)
                 portfolio_state = {
-                    "balance": exec_stats.get("balance", 10000),
-                    "initial_balance": exec_stats.get("initial_balance", 10000),
-                    "peak_balance": exec_stats.get("balance", 10000),
+                    "balance": balance,
+                    "initial_balance": initial_bal,
+                    "peak_balance": balance,  # simplified: use current balance as peak
                     "daily_pnl": exec_stats.get("daily_pnl", 0),
                     "positions": [{"symbol": p.symbol, "pnl_pct": 0} for p in open_pos],
-                    "market_vol": 0,
+                    "market_vol": 0,      # not tracked at this layer; L5 trip unlikely
                     "baseline_vol": 0.01,
                     "avg_correlation": 0,
                 }
