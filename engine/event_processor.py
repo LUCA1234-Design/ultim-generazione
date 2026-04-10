@@ -77,6 +77,10 @@ class EventProcessor:
         self._processed_count = 0
         self._signal_count = 0
         self._last_signal_info: str = ""
+        # Risk block log cooldown tracking (per-symbol)
+        self._risk_block_log_times: Dict[str, float] = {}
+        self._risk_block_counts: Dict[str, int] = {}
+        self._risk_block_details: Dict[str, dict] = {}
         # Per-decision context stored on close for feedback loops
         self._decision_contexts: Dict[str, Dict[str, Any]] = {}
         self._skip_reasons: Dict[str, int] = {
@@ -94,6 +98,7 @@ class EventProcessor:
             "max_daily_loss_usdt": 0,
             "max_daily_loss_pct": 0,
             "max_consecutive_losses": 0,
+            "risk_blocked": 0,
             "high_correlation": 0,
             "unfavorable_regime": 0,
             "weak_confluence": 0,
@@ -124,6 +129,51 @@ class EventProcessor:
     
     def _skip(self, reason: str) -> None:
         self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
+
+    def _log_risk_block(self, symbol: str, reason: str, details: dict) -> None:
+        """Log risk block events with cooldown to prevent spam.
+
+        Emits one INFO summary per symbol every RISK_LOG_COOLDOWN seconds,
+        with count of how many signals were blocked in the interval.
+        """
+        from config.settings import RISK_LOG_COOLDOWN
+        key = f"{symbol}_{reason}"
+        now = time.time()
+        last_log = self._risk_block_log_times.get(key, 0.0)
+        count = self._risk_block_counts.get(key, 0) + 1
+        self._risk_block_counts[key] = count
+        self._risk_block_details[key] = details
+
+        if now - last_log >= RISK_LOG_COOLDOWN:
+            # Build human-readable detail string
+            detail_str = ""
+            if reason == "max_daily_loss_pct":
+                detail_str = (
+                    f"daily_loss={details.get('daily_loss_pct', 0):.1f}% "
+                    f"> {details.get('daily_loss_pct_max', 0):.1f}% max"
+                )
+            elif reason == "max_daily_loss_usdt":
+                detail_str = (
+                    f"daily_loss={details.get('daily_loss_usdt', 0):.2f}$ "
+                    f"> {details.get('daily_loss_usdt_max', 0):.2f}$ max"
+                )
+            elif reason == "max_consecutive_losses":
+                detail_str = (
+                    f"consecutive_losses={details.get('consecutive_losses', 0)} "
+                    f">= {details.get('consecutive_losses_max', 0)} max"
+                )
+            logger.info(
+                f"⚠️ Risk guard active [{symbol}]: {detail_str} ({reason}). "
+                f"Blocked {count} signal(s) in last {RISK_LOG_COOLDOWN}s. "
+                f"Monitoring continues."
+            )
+            self._risk_block_log_times[key] = now
+            self._risk_block_counts[key] = 0
+        else:
+            logger.debug(
+                f"⛔ {symbol} risk_blocked={reason} "
+                f"(blocked {count}x since last log)"
+            )
 
     # ------------------------------------------------------------------
     # Correlation guard
@@ -210,10 +260,13 @@ class EventProcessor:
             self._skip("existing_symbol_position")
             logger.debug(f"⛔ {symbol}/{interval} SKIP: existing_symbol_position")
             return None  # Already have a position on this symbol
-        risk_blocked, risk_reason = self.execution.is_risk_blocked()
+        risk_blocked, risk_reason, risk_details = self.execution.is_risk_blocked()
         if risk_blocked:
+            self._log_risk_block(symbol, risk_reason, risk_details)
             self._skip(risk_reason)
-            logger.info(f"⛔ {symbol}/{interval} SKIP: risk_blocked reason={risk_reason}")
+            # NON ritornare — continuare la pipeline per analisi, bloccare solo l'esecuzione
+            # La posizione non verrà aperta — il blocco avviene in open_position()
+            # Ma per efficienza, skippiamo comunque se blocked
             return None
 
         # Guard: V18 Kill Switch check

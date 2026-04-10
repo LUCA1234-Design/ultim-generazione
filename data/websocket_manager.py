@@ -40,6 +40,9 @@ _LAST_MESSAGE_TIME: Dict[str, float] = {}
 _WS_FAILCOUNT: Dict[str, int] = {}
 _WS_URLS: Dict[str, str] = {}
 
+WS_GRACE_PERIOD = 2.0   # seconds to wait after reconnect before processing events
+_WS_CONNECTED_AT: Dict[str, float] = {}  # ws_name -> timestamp of last on_open
+
 # Callbacks registered by the event processor
 _on_kline_closed: Optional[Callable] = None
 _on_kline_update: Optional[Callable] = None
@@ -91,6 +94,11 @@ def _split_into_groups(symbols: List[str], group_size: int = WS_GROUP_SIZE) -> L
 
 def _handle_message(ws_name: str, raw_message: str) -> None:
     try:
+        # Grace period check: drop messages in the first WS_GRACE_PERIOD seconds after reconnect
+        connected_at = _WS_CONNECTED_AT.get(ws_name, 0.0)
+        if connected_at > 0 and (time.time() - connected_at) < WS_GRACE_PERIOD:
+            return  # silently drop during grace period
+
         data = json.loads(raw_message)
         stream_data = data.get("data", data)
         kline = stream_data.get("k")
@@ -172,12 +180,25 @@ def _run_ws(ws_name: str, url: str) -> None:
     while True:
         try:
             logger.info(f"WS [{ws_name}] connecting...")
+
+            def _on_open(ws):
+                _WS_CONNECTED_AT[ws_name] = time.time()
+                logger.info(f"WS [{ws_name}] connected (grace period {WS_GRACE_PERIOD}s)")
+
+            def _on_error(ws, err):
+                _WS_CONNECTED_AT[ws_name] = 0.0  # reset → drop all messages until next on_open
+                logger.warning(f"WS [{ws_name}] error: {err}")
+
+            def _on_close(ws, code, msg):
+                _WS_CONNECTED_AT[ws_name] = 0.0  # reset
+                logger.info(f"WS [{ws_name}] closed ({code})")
+
             ws_app = websocket.WebSocketApp(
                 url,
                 on_message=lambda ws, msg: _handle_message(ws_name, msg),
-                on_error=lambda ws, err: logger.warning(f"WS [{ws_name}] error: {err}"),
-                on_close=lambda ws, code, msg: logger.info(f"WS [{ws_name}] closed ({code})"),
-                on_open=lambda ws: logger.info(f"WS [{ws_name}] connected"),
+                on_error=_on_error,
+                on_close=_on_close,
+                on_open=_on_open,
             )
 
             prev = WS_HEALTH.get(ws_name, {})
