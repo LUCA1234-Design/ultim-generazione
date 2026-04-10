@@ -89,6 +89,7 @@ SIGNAL_COOLDOWN_BY_TF = {"15m": 900, "1h": 3600, "4h": 7200}
 DIVERGENCE_MAX_AGE_HOURS = 4
 DIVERGENCE_MAX_AGE_CANDLES = 3
 DIVERGENCE_MAX_AGE_BY_TF = {"15m": 2, "1h": 2, "4h": 1}
+RISK_LOG_COOLDOWN = 60  # seconds between risk block log messages per symbol
 
 # ============================================================
 # BREAKOUT RULES

@@ -115,7 +115,7 @@ class ExecutionEngine:
             self._consecutive_losses = 0
             logger.info("🔄 Daily risk counters reset")
 
-    def is_risk_blocked(self) -> tuple[bool, str]:
+    def is_risk_blocked(self) -> tuple[bool, str, dict]:
         self._roll_day_if_needed()
 
         daily_loss_usdt = max(0.0, -self._daily_pnl)
@@ -124,16 +124,25 @@ class ExecutionEngine:
             if self._initial_balance > 0 else 0.0
         )
 
+        details = {
+            "daily_loss_usdt": daily_loss_usdt,
+            "daily_loss_pct": daily_loss_pct,
+            "daily_loss_pct_max": MAX_DAILY_LOSS_PCT,
+            "daily_loss_usdt_max": MAX_DAILY_LOSS_USDT,
+            "consecutive_losses": self._consecutive_losses,
+            "consecutive_losses_max": MAX_CONSECUTIVE_LOSSES,
+        }
+
         if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
-            return True, "max_daily_loss_usdt"
+            return True, "max_daily_loss_usdt", details
 
         if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
-            return True, "max_daily_loss_pct"
+            return True, "max_daily_loss_pct", details
 
         if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-            return True, "max_consecutive_losses"
+            return True, "max_consecutive_losses", details
 
-        return False, ""
+        return False, "", details
 
     # ------------------------------------------------------------------
     # Position management
@@ -285,7 +294,7 @@ class ExecutionEngine:
 
     def get_stats(self) -> Dict[str, Any]:
         self._roll_day_if_needed()
-        risk_blocked, risk_reason = self.is_risk_blocked()
+        risk_blocked, risk_reason, _risk_details = self.is_risk_blocked()
 
         return {
             "paper_trading": self.paper_trading,
