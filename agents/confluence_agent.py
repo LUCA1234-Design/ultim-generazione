@@ -21,6 +21,9 @@ TF_ORDER = ["15m", "1h", "4h"]
 # Bidirectional evaluation constants
 _OPPOSITE_DOMINANCE_MARGIN = 0.15   # opposite direction must exceed primary by this to flip
 _OPPOSITE_SCORE_PENALTY = 0.85      # score multiplier applied when flipping direction
+_TF_AGREEMENT_THRESHOLD = 0.50      # minimum TF score to be considered "agreeing"
+_PRIMARY_TF_WEAK_THRESHOLD = 0.45   # primary TF score below this triggers penalty
+_PRIMARY_TF_WEAK_PENALTY = 0.80     # multiplier applied when primary TF is weak
 
 
 class ConfluenceAgent(BaseAgent):
@@ -188,14 +191,14 @@ class ConfluenceAgent(BaseAgent):
         details.append(f"opposite={opposite_score:.2f}")
 
         # === SOGLIA ALZATA A 0.50 ===
-        agreeing = sum(1 for v in tf_scores.values() if v > 0.50)
+        agreeing = sum(1 for v in tf_scores.values() if v > _TF_AGREEMENT_THRESHOLD)
         total_tfs = len(tf_scores)
 
         # Penalità se il TF primario è debole
         primary_tf_score = tf_scores.get(interval, 0.0)
-        if primary_tf_score < 0.45:
-            final_score *= 0.80
-            details.append(f"primary_tf_weak({primary_tf_score:.2f})x0.80")
+        if primary_tf_score < _PRIMARY_TF_WEAK_THRESHOLD:
+            final_score *= _PRIMARY_TF_WEAK_PENALTY
+            details.append(f"primary_tf_weak({primary_tf_score:.2f})x{_PRIMARY_TF_WEAK_PENALTY}")
 
         # confidence = frazione TF sopra 0.50 (non 0.40)
         confidence = agreeing / max(total_tfs, 1)

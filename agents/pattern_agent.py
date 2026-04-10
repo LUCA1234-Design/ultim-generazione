@@ -26,6 +26,12 @@ from config.settings import (
 
 logger = logging.getLogger("PatternAgent")
 
+# Weighted vote direction thresholds
+_RSI_LONG_THRESHOLD = 45        # RSI below this → long vote
+_RSI_SHORT_THRESHOLD = 55       # RSI above this → short vote
+_DI_SPREAD_THRESHOLD = 3        # minimum DI spread magnitude for a vote
+_STRUCTURE_OPPOSED_PENALTY = 0.70  # score multiplier when market structure opposes direction
+
 
 class PatternAgent(BaseAgent):
     """Detects all V16 patterns with auto-calibrating thresholds."""
@@ -351,16 +357,16 @@ class PatternAgent(BaseAgent):
         short_votes = 0.0
 
         # RSI (peso 1.0)
-        if rsi_val < 45:
+        if rsi_val < _RSI_LONG_THRESHOLD:
             long_votes += 1.0
-        elif rsi_val > 55:
+        elif rsi_val > _RSI_SHORT_THRESHOLD:
             short_votes += 1.0
 
         # DI+ vs DI- (peso 1.5 — più affidabile)
         di_spread_val = float(last_di_p) - float(last_di_m)
-        if di_spread_val > 3:
+        if di_spread_val > _DI_SPREAD_THRESHOLD:
             long_votes += 1.5
-        elif di_spread_val < -3:
+        elif di_spread_val < -_DI_SPREAD_THRESHOLD:
             short_votes += 1.5
 
         # Divergenza RSI (peso 2.5 — segnale molto forte)
@@ -436,11 +442,11 @@ class PatternAgent(BaseAgent):
             details.append("structure_aligned_short(+0.10)")
         # Penalità se struttura opposta alla direzione
         elif direction == "long" and market_structure == "downtrend":
-            score *= 0.70
-            details.append("structure_OPPOSED_long(x0.70)")
+            score *= _STRUCTURE_OPPOSED_PENALTY
+            details.append(f"structure_OPPOSED_long(x{_STRUCTURE_OPPOSED_PENALTY})")
         elif direction == "short" and market_structure == "uptrend":
-            score *= 0.70
-            details.append("structure_OPPOSED_short(x0.70)")
+            score *= _STRUCTURE_OPPOSED_PENALTY
+            details.append(f"structure_OPPOSED_short(x{_STRUCTURE_OPPOSED_PENALTY})")
 
         return float(np.clip(score, 0.0, 1.0)), direction, details
 

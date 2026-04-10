@@ -31,6 +31,9 @@ from config.settings import (
 
 logger = logging.getLogger("EventProcessor")
 
+# Candle momentum filter thresholds
+_VOLUME_THRESHOLD_RATIO = 0.70      # skip if volume < this fraction of recent average
+_MIN_EMA_SLOPE_THRESHOLD = 0.0002   # skip if absolute EMA slope is below this (flat market)
 
 class EventProcessor:
     """Routes candle close events through the full agent pipeline."""
@@ -260,7 +263,7 @@ class EventProcessor:
                 vol_avg = float(df["volume"].iloc[-21:-1].mean())
                 vol_current = float(df["volume"].iloc[-1])
                 # Candela con volume sotto il 70% della media → segnale debole
-                if vol_avg > 0 and vol_current < vol_avg * 0.70:
+                if vol_avg > 0 and vol_current < vol_avg * _VOLUME_THRESHOLD_RATIO:
                     self._skip("low_volume_candle")
                     logger.debug(
                         f"⛔ {symbol}/{interval} SKIP: low_volume_candle "
@@ -277,7 +280,7 @@ class EventProcessor:
             if not slope_series.empty:
                 current_slope = float(slope_series.iloc[-1])
                 # Se slope è quasi zero (mercato piatto), skip
-                if abs(current_slope) < 0.0002:
+                if abs(current_slope) < _MIN_EMA_SLOPE_THRESHOLD:
                     self._skip("flat_ema_slope")
                     logger.debug(
                         f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={current_slope:.5f}"

@@ -19,6 +19,10 @@ DEFAULT_WIN_RATE = 0.55
 # Regime-based position sizing multipliers
 _REGIME_SIZE_MULT = {"trending": 1.0, "ranging": 0.7, "volatile": 0.5, "unknown": 0.8}
 
+# Structural SL constants
+_STRUCTURAL_SL_BUFFER = 0.001   # 0.1% price buffer beyond swing level
+_MAX_ATR_MULTIPLIER = 2.5       # maximum ATR multiplier cap for structural SL
+
 
 class RiskAgent(BaseAgent):
     """Adaptive risk agent with Kelly sizing and ATR-based levels."""
@@ -97,7 +101,7 @@ class RiskAgent(BaseAgent):
                 swing_low = float(lows[recent_lows_idx[-1]])
                 # SL = swing low - piccolo buffer (0.1% * prezzo)
                 close_price = float(df["close"].iloc[-1])
-                buffer = close_price * 0.001
+                buffer = close_price * _STRUCTURAL_SL_BUFFER
                 return swing_low - buffer
             else:
                 # SL sopra l'ultimo swing high significativo
@@ -109,7 +113,7 @@ class RiskAgent(BaseAgent):
                     return None
                 swing_high = float(highs[recent_highs_idx[-1]])
                 close_price = float(df["close"].iloc[-1])
-                buffer = close_price * 0.001
+                buffer = close_price * _STRUCTURAL_SL_BUFFER
                 return swing_high + buffer
         except Exception:
             return None
@@ -141,11 +145,11 @@ class RiskAgent(BaseAgent):
             if direction == "long":
                 # Per LONG: usa il SL più BASSO (più lontano) per dare respiro alla posizione
                 # ma non più di 2.5×ATR dal close
-                max_sl = close - 2.5 * _atr
+                max_sl = close - _MAX_ATR_MULTIPLIER * _atr
                 sl = max(min(sl, structural_sl), max_sl)
             else:
                 # Per SHORT: usa il SL più ALTO (più lontano) ma non più di 2.5×ATR
-                max_sl = close + 2.5 * _atr
+                max_sl = close + _MAX_ATR_MULTIPLIER * _atr
                 sl = min(max(sl, structural_sl), max_sl)
             # Recalculate rr with new sl
             rr = abs(tp1 - close) / max(abs(close - sl), 1e-10)
