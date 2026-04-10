@@ -94,6 +94,8 @@ class EventProcessor:
             "high_correlation": 0,
             "unfavorable_regime": 0,
             "weak_confluence": 0,
+            "low_volume_candle": 0,
+            "flat_ema_slope": 0,
             # V18 kill switch reasons
             "kill_switch_killed": 0,
             "kill_switch_safe_mode": 0,
@@ -252,6 +254,38 @@ class EventProcessor:
             logger.info(f"⛔ {symbol}/{interval} SKIP: high_correlation={avg_correlation:.2f}")
             return None
 
+        # === FILTRO MOMENTUM CANDELA (CECCHINO) ===
+        try:
+            if "volume" in df.columns and len(df) >= 21:
+                vol_avg = float(df["volume"].iloc[-21:-1].mean())
+                vol_current = float(df["volume"].iloc[-1])
+                # Candela con volume sotto il 70% della media → segnale debole
+                if vol_avg > 0 and vol_current < vol_avg * 0.70:
+                    self._skip("low_volume_candle")
+                    logger.debug(
+                        f"⛔ {symbol}/{interval} SKIP: low_volume_candle "
+                        f"vol={vol_current:.0f} avg={vol_avg:.0f} ratio={vol_current/vol_avg:.2f}"
+                    )
+                    return None
+        except Exception as _vol_err:
+            logger.debug(f"volume_filter error: {_vol_err}")
+
+        # Filtro EMA slope: richiedere che l'EMA 20 stia accelerando
+        try:
+            from indicators.technical import ema_slope as _ema_slope_fn
+            slope_series = _ema_slope_fn(df["close"], 20, 3)
+            if not slope_series.empty:
+                current_slope = float(slope_series.iloc[-1])
+                # Se slope è quasi zero (mercato piatto), skip
+                if abs(current_slope) < 0.0002:
+                    self._skip("flat_ema_slope")
+                    logger.debug(
+                        f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={current_slope:.5f}"
+                    )
+                    return None
+        except Exception as _slope_err:
+            logger.debug(f"ema_slope_filter error: {_slope_err}")
+
         # ---- Run agents ----
         agent_results: Dict[str, AgentResult] = {}
 
@@ -274,13 +308,22 @@ class EventProcessor:
                 if regime_result.metadata else "unknown"
             )
 
-        # ---- SNIPER: Skip volatile regimes unless score is very high ----
+        # === FILTRO REGIME VOLATILE POTENZIATO ===
         if current_regime == "volatile" and regime_result is not None:
-            if regime_result.score < 0.70:
+            # In regime volatile: richiedi almeno score >= 0.80
+            # oppure skippa direttamente se score del regime < 0.80
+            if regime_result.score < 0.80:
                 self._skip("unfavorable_regime")
                 logger.info(
-                    f"⛔ {symbol}/{interval} SKIP: volatile_regime "
-                    f"score={regime_result.score:.2f} < 0.70"
+                    f"⛔ {symbol}/{interval} SKIP: volatile_regime_strict "
+                    f"score={regime_result.score:.2f} < 0.80"
+                )
+                return None
+            # Anche con score >= 0.80, richiedere conferma pattern
+            if "pattern" not in agent_results or agent_results["pattern"].score < 0.65:
+                self._skip("unfavorable_regime")
+                logger.info(
+                    f"⛔ {symbol}/{interval} SKIP: volatile_regime_no_pattern_confirm"
                 )
                 return None
 

@@ -187,8 +187,18 @@ class ConfluenceAgent(BaseAgent):
         details.append(f"primary={primary_score:.2f}")
         details.append(f"opposite={opposite_score:.2f}")
 
-        agreeing = sum(1 for v in tf_scores.values() if v > 0.40)
+        # === SOGLIA ALZATA A 0.50 ===
+        agreeing = sum(1 for v in tf_scores.values() if v > 0.50)
         total_tfs = len(tf_scores)
+
+        # Penalità se il TF primario è debole
+        primary_tf_score = tf_scores.get(interval, 0.0)
+        if primary_tf_score < 0.45:
+            final_score *= 0.80
+            details.append(f"primary_tf_weak({primary_tf_score:.2f})x0.80")
+
+        # confidence = frazione TF sopra 0.50 (non 0.40)
+        confidence = agreeing / max(total_tfs, 1)
 
         return AgentResult(
             agent_name=self.name,
@@ -196,7 +206,7 @@ class ConfluenceAgent(BaseAgent):
             interval=interval,
             score=final_score,
             direction=final_direction,
-            confidence=agreeing / max(total_tfs, 1),
+            confidence=confidence,
             details=details,
             metadata={
                 "tf_scores": tf_scores,
