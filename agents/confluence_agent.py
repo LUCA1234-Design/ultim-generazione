@@ -9,7 +9,7 @@ import pandas as pd
 from typing import Dict, Optional
 
 from agents.base_agent import BaseAgent, AgentResult
-from indicators.technical import rsi, macd, adx, bollinger_bands, obv, zscore
+from indicators.technical import rsi, macd, adx, bollinger_bands, obv, zscore, vwap, supertrend, ema
 from indicators.smart_money import cumulative_volume_delta, liquidity_sweep
 from data import data_store
 
@@ -78,6 +78,26 @@ class ConfluenceAgent(BaseAgent):
             last_delta = float(delta.iloc[-1])
             sweep = liquidity_sweep(df, 20).iloc[-1]
 
+            # VWAP position (rolling 20-bar)
+            _vwap_val = float(vwap(df, period=20).iloc[-1])
+            above_vwap = float(last_close) > _vwap_val
+
+            # Supertrend direction
+            try:
+                _, _st_dir_s = supertrend(df, period=10, multiplier=3.0)
+                _st_long = int(_st_dir_s.iloc[-1]) == 1
+            except Exception:
+                _st_long = None
+
+            # EMA 200 position
+            _ema200_long = None  # type: Optional[bool]
+            if len(df) >= 200:
+                try:
+                    _ema200_val = float(ema(close, 200).iloc[-1])
+                    _ema200_long = float(last_close) > _ema200_val
+                except Exception:
+                    pass
+
             score = 0.0
             if direction == "long":
                 if rsi_val < 55: score += 0.15       # was < 50
@@ -89,6 +109,10 @@ class ConfluenceAgent(BaseAgent):
                 if obv_slope > 0: score += 0.10
                 if last_delta > 0: score += 0.10
                 if sweep == 1: score += 0.20  # bullish liquidity sweep
+                # V18 additions
+                if above_vwap: score += 0.10
+                if _st_long is True: score += 0.10
+                if _ema200_long is True: score += 0.08
             else:
                 if rsi_val > 45: score += 0.15       # was > 50
                 if rsi_val > 60: score += 0.10       # was > 65
@@ -99,6 +123,10 @@ class ConfluenceAgent(BaseAgent):
                 if obv_slope < 0: score += 0.10
                 if last_delta < 0: score += 0.10
                 if sweep == -1: score += 0.20  # bearish liquidity sweep
+                # V18 additions
+                if not above_vwap: score += 0.10
+                if _st_long is False: score += 0.10
+                if _ema200_long is False: score += 0.08
 
             return float(np.clip(score, 0.0, 1.0))
         except Exception as e:

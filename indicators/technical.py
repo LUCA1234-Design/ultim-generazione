@@ -1,11 +1,12 @@
 """
-Technical indicators for V17.
+Technical indicators for V17/V18.
 All indicators accept pandas Series / DataFrame and return pandas objects.
-Includes: RSI, ATR, MACD, OBV, Bollinger Bands, Keltner Channels, ADX, Z-Score.
+Includes: RSI, ATR, MACD, OBV, Bollinger Bands, Keltner Channels, ADX, Z-Score,
+          VWAP, Anchored VWAP, Supertrend.
 """
 import numpy as np
 import pandas as pd
-from typing import Tuple
+from typing import Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +168,141 @@ def volume_ratio(df: pd.DataFrame, lookback: int = 20) -> pd.Series:
     """Current volume divided by rolling average volume."""
     avg = df["volume"].rolling(lookback).mean()
     return df["volume"] / avg.replace(0, np.nan)
+
+
+# ---------------------------------------------------------------------------
+# VWAP — Volume Weighted Average Price
+# ---------------------------------------------------------------------------
+
+def vwap(df: pd.DataFrame, period: Optional[int] = None) -> pd.Series:
+    """Volume Weighted Average Price.
+
+    Parameters
+    ----------
+    df     : OHLCV DataFrame
+    period : rolling window in bars.  If None, computes cumulative VWAP
+             from the first bar of the DataFrame (full-history mode).
+
+    Returns
+    -------
+    pd.Series of VWAP values.
+    """
+    typical = (df["high"] + df["low"] + df["close"]) / 3.0
+    tp_vol = typical * df["volume"]
+    if period is None:
+        return tp_vol.cumsum() / df["volume"].cumsum().replace(0, np.nan)
+    return (
+        tp_vol.rolling(period).sum()
+        / df["volume"].rolling(period).sum().replace(0, np.nan)
+    )
+
+
+def anchored_vwap(df: pd.DataFrame, anchor_idx: int = 0) -> pd.Series:
+    """VWAP anchored to a specific bar index.
+
+    Parameters
+    ----------
+    df         : OHLCV DataFrame
+    anchor_idx : bar index (0-based) from which accumulation starts.
+                 Negative values count from the end.
+
+    Returns
+    -------
+    pd.Series — NaN before *anchor_idx*, VWAP values from *anchor_idx* onward.
+    """
+    n = len(df)
+    if anchor_idx < 0:
+        anchor_idx = max(0, n + anchor_idx)
+    anchor_idx = max(0, min(anchor_idx, n - 1))
+
+    typical = (df["high"] + df["low"] + df["close"]) / 3.0
+    tp_vol = typical * df["volume"]
+    avwap = tp_vol.iloc[anchor_idx:].cumsum() / (
+        df["volume"].iloc[anchor_idx:].cumsum().replace(0, np.nan)
+    )
+    result = pd.Series(np.nan, index=df.index)
+    result.iloc[anchor_idx:] = avwap.values
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Supertrend
+# ---------------------------------------------------------------------------
+
+def supertrend(
+    df: pd.DataFrame, period: int = 10, multiplier: float = 3.0
+) -> Tuple[pd.Series, pd.Series]:
+    """Supertrend indicator.
+
+    Uses a recursive trailing-stop algorithm on ATR-based upper/lower bands.
+
+    Parameters
+    ----------
+    df         : OHLCV DataFrame
+    period     : ATR period
+    multiplier : ATR band multiplier
+
+    Returns
+    -------
+    st_line   : pd.Series — trailing stop value
+    direction : pd.Series[int] — +1 uptrend (price above band), -1 downtrend
+    """
+    hl2 = (df["high"] + df["low"]) / 2.0
+    _atr = atr(df, period)
+    basic_upper = (hl2 + multiplier * _atr).values
+    basic_lower = (hl2 - multiplier * _atr).values
+    close = df["close"].values
+    n = len(df)
+
+    final_upper = np.full(n, np.nan)
+    final_lower = np.full(n, np.nan)
+    st = np.full(n, np.nan)
+    direction = np.ones(n, dtype=int)
+
+    valid = np.where(~np.isnan(basic_upper))[0]
+    if len(valid) == 0:
+        return pd.Series(st, index=df.index), pd.Series(direction, index=df.index)
+
+    i0 = int(valid[0])
+    final_upper[i0] = basic_upper[i0]
+    final_lower[i0] = basic_lower[i0]
+    st[i0] = basic_upper[i0]
+    direction[i0] = -1
+
+    for i in range(i0 + 1, n):
+        if np.isnan(basic_upper[i]):
+            st[i] = st[i - 1] if not np.isnan(st[i - 1]) else np.nan
+            direction[i] = direction[i - 1]
+            continue
+
+        prev_fu = final_upper[i - 1] if not np.isnan(final_upper[i - 1]) else basic_upper[i]
+        final_upper[i] = (
+            basic_upper[i]
+            if basic_upper[i] < prev_fu or close[i - 1] > prev_fu
+            else prev_fu
+        )
+
+        prev_fl = final_lower[i - 1] if not np.isnan(final_lower[i - 1]) else basic_lower[i]
+        final_lower[i] = (
+            basic_lower[i]
+            if basic_lower[i] > prev_fl or close[i - 1] < prev_fl
+            else prev_fl
+        )
+
+        prev_dir = direction[i - 1]
+        if prev_dir == 1:  # was uptrend
+            if close[i] < final_lower[i]:
+                st[i] = final_upper[i]
+                direction[i] = -1
+            else:
+                st[i] = final_lower[i]
+                direction[i] = 1
+        else:  # was downtrend
+            if close[i] > final_upper[i]:
+                st[i] = final_lower[i]
+                direction[i] = 1
+            else:
+                st[i] = final_upper[i]
+                direction[i] = -1
+
+    return pd.Series(st, index=df.index), pd.Series(direction, index=df.index)
