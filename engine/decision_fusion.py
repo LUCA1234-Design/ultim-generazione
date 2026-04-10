@@ -24,6 +24,8 @@ except ImportError:
 # Sniper calibration constants
 _SNIPER_MIN_DIRECTION_AGREEMENT = 0.60   # minimum fraction of directional agents that must agree
 _SNIPER_MIN_AGREEING_TIMEFRAMES = 2      # minimum timeframes agreeing for MTF confluence
+_SNIPER_MIN_STRONG_AGENTS = 3            # minimum agents with score >= threshold for signal
+_SNIPER_AGENT_MIN_SCORE = 0.45           # each agent must have at least this score
 DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
@@ -249,6 +251,26 @@ class DecisionFusion:
                 )
             except Exception as e:
                 reasoning.append(f"CONSENSUS_3R: fallback to 1-round (error: {e})")
+
+        # === CECCHINO: RICHIEDERE ALMENO 3 AGENTI SOPRA SOGLIA ===
+        strong_agents = [
+            name for name, result in agent_results.items()
+            if result is not None and result.score >= _SNIPER_AGENT_MIN_SCORE
+        ]
+        if len(strong_agents) < _SNIPER_MIN_STRONG_AGENTS:
+            reasoning.append(
+                f"SNIPER_VETO_WEAK_AGENTS: only {len(strong_agents)}/{_SNIPER_MIN_STRONG_AGENTS} "
+                f"agents above {_SNIPER_AGENT_MIN_SCORE:.0%} threshold "
+                f"(strong={strong_agents})"
+            )
+            return FusionResult(
+                decision_id=decision_id, symbol=symbol, interval=interval,
+                decision=DECISION_HOLD, final_score=float(final_score),
+                direction=direction, agent_scores=agent_scores,
+                agent_results=agent_results, threshold=self._threshold,
+                reasoning=reasoning,
+            )
+        reasoning.append(f"SNIPER_OK: {len(strong_agents)} strong agents (>={_SNIPER_AGENT_MIN_SCORE:.0%})")
 
         # --- Regime-aware threshold adjustment ---
         effective_threshold = self._threshold * _REGIME_THRESHOLD_MULTIPLIERS.get(regime, 1.0)

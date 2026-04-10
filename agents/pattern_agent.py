@@ -26,6 +26,12 @@ from config.settings import (
 
 logger = logging.getLogger("PatternAgent")
 
+# Weighted vote direction thresholds
+_RSI_LONG_THRESHOLD = 45        # RSI below this → long vote
+_RSI_SHORT_THRESHOLD = 55       # RSI above this → short vote
+_DI_SPREAD_THRESHOLD = 3        # minimum DI spread magnitude for a vote
+_STRUCTURE_OPPOSED_PENALTY = 0.70  # score multiplier when market structure opposes direction
+
 
 class PatternAgent(BaseAgent):
     """Detects all V16 patterns with auto-calibrating thresholds."""
@@ -223,6 +229,47 @@ class PatternAgent(BaseAgent):
             return None
 
     # ----------------------------------------------------------------
+    # Market Structure Detection
+    # ----------------------------------------------------------------
+
+    def detect_market_structure(self, df: pd.DataFrame, lookback: int = 20) -> str:
+        """Detect Higher High/Higher Low (uptrend) or Lower High/Lower Low (downtrend).
+
+        Returns: 'uptrend', 'downtrend', or 'sideways'
+        """
+        if len(df) < lookback + 5:
+            return "sideways"
+        try:
+            highs = df["high"].iloc[-lookback:].values
+            lows = df["low"].iloc[-lookback:].values
+            # Divide in 3 segmenti e confronta
+            seg = lookback // 3
+            h1 = highs[:seg].max()
+            h2 = highs[seg:2*seg].max()
+            h3 = highs[2*seg:].max()
+            l1 = lows[:seg].min()
+            l2 = lows[seg:2*seg].min()
+            l3 = lows[2*seg:].min()
+
+            hh = h3 > h2 > h1  # Higher Highs
+            hl = l3 > l2 > l1  # Higher Lows
+            lh = h3 < h2 < h1  # Lower Highs
+            ll = l3 < l2 < l1  # Lower Lows
+
+            if hh and hl:
+                return "uptrend"
+            elif lh and ll:
+                return "downtrend"
+            elif hh or hl:
+                return "weak_uptrend"
+            elif lh or ll:
+                return "weak_downtrend"
+            else:
+                return "sideways"
+        except Exception:
+            return "sideways"
+
+    # ----------------------------------------------------------------
     # Scoring
     # ----------------------------------------------------------------
 
@@ -305,16 +352,101 @@ class PatternAgent(BaseAgent):
             score += 0.10
             details.append(f"ADX({last_adx:.1f})")
 
-        # Direction based on RSI + DI
-        direction = "long" if (rsi_val < 50 and last_di_p >= last_di_m) else "short"
+        # === VOTO PESATO DIREZIONE CECCHINO ===
+        long_votes = 0.0
+        short_votes = 0.0
+
+        # RSI (peso 1.0)
+        if rsi_val < _RSI_LONG_THRESHOLD:
+            long_votes += 1.0
+        elif rsi_val > _RSI_SHORT_THRESHOLD:
+            short_votes += 1.0
+
+        # DI+ vs DI- (peso 1.5 — più affidabile)
+        di_spread_val = float(last_di_p) - float(last_di_m)
+        if di_spread_val > _DI_SPREAD_THRESHOLD:
+            long_votes += 1.5
+        elif di_spread_val < -_DI_SPREAD_THRESHOLD:
+            short_votes += 1.5
+
+        # Divergenza RSI (peso 2.5 — segnale molto forte)
         if div_type == "bullish":
-            direction = "long"
+            long_votes += 2.5
         elif div_type == "bearish":
-            direction = "short"
+            short_votes += 2.5
+
+        # Breakout confermato (peso 2.0)
         if bo == "breakout_long":
-            direction = "long"
+            long_votes += 2.0
         elif bo == "breakout_short":
+            short_votes += 2.0
+
+        # Hammer / Shooting Star (peso 1.5)
+        if hammer == "hammer_bullish":
+            long_votes += 1.5
+        elif hammer == "shooting_star_bearish":
+            short_votes += 1.5
+
+        # Squeeze breakout: usa la candela corrente per determinare direzione
+        if sq_val:
+            last_close_val = float(df["close"].iloc[-1])
+            prev_close_val = float(df["close"].iloc[-2]) if len(df) > 2 else last_close_val
+            if last_close_val > prev_close_val:
+                long_votes += 1.0
+            else:
+                short_votes += 1.0
+
+        # Volume delta (CVD) — importare da smart_money se disponibile
+        try:
+            from indicators.smart_money import cumulative_volume_delta
+            _, delta_series = cumulative_volume_delta(df)
+            recent_delta = float(delta_series.iloc[-3:].sum())
+            if recent_delta > 0:
+                long_votes += 0.8
+            elif recent_delta < 0:
+                short_votes += 0.8
+        except Exception:
+            pass
+
+        # EMA slope (peso 1.0)
+        try:
+            from indicators.technical import ema_slope as _ema_slope
+            slope = float(_ema_slope(df["close"], 20, 5).iloc[-1])
+            if slope > 0:
+                long_votes += 1.0
+            elif slope < 0:
+                short_votes += 1.0
+        except Exception:
+            pass
+
+        # Decisione finale
+        if long_votes == short_votes:
+            direction = "long" if rsi_val <= 50 else "short"
+        elif long_votes > short_votes:
+            direction = "long"
+        else:
             direction = "short"
+
+        details.append(f"dir_votes(L={long_votes:.1f}/S={short_votes:.1f})")
+
+        # === FILTRO STRUTTURA MERCATO ===
+        market_structure = self.detect_market_structure(df)
+        details.append(f"structure={market_structure}")
+
+        # Bonus se struttura allineata con direzione
+        if direction == "long" and market_structure in ("uptrend", "weak_uptrend"):
+            score += 0.10
+            details.append("structure_aligned_long(+0.10)")
+        elif direction == "short" and market_structure in ("downtrend", "weak_downtrend"):
+            score += 0.10
+            details.append("structure_aligned_short(+0.10)")
+        # Penalità se struttura opposta alla direzione
+        elif direction == "long" and market_structure == "downtrend":
+            score *= _STRUCTURE_OPPOSED_PENALTY
+            details.append(f"structure_OPPOSED_long(x{_STRUCTURE_OPPOSED_PENALTY})")
+        elif direction == "short" and market_structure == "uptrend":
+            score *= _STRUCTURE_OPPOSED_PENALTY
+            details.append(f"structure_OPPOSED_short(x{_STRUCTURE_OPPOSED_PENALTY})")
 
         return float(np.clip(score, 0.0, 1.0)), direction, details
 

@@ -471,6 +471,12 @@ def _position_monitor(
                     except Exception as e:
                         logger.error(f"meta.record_outcome error: {e}")
 
+                    # Salvare ctx PRIMA del pop
+                    try:
+                        ctx_for_evolution = decision_context.get(closed.decision_id, {})
+                    except Exception:
+                        ctx_for_evolution = {}
+
                     # Clean runtime context
                     try:
                         if closed.decision_id in decision_context:
@@ -478,18 +484,15 @@ def _position_monitor(
                     except Exception as e:
                         logger.debug(f"decision_context cleanup error: {e}")
 
-                    # Notify evolution engine of closed trade (loops #5 & #7)
+                    # Notify evolution engine of closed trade (usa ctx_for_evolution, non decision_context)
                     try:
                         if evolution_engine is not None:
-                            ctx = decision_context.get(
-                                getattr(closed, "decision_id", None), {}
-                            )
-                            # Also try the processor's own context store
-                            if not ctx and hasattr(processor, "get_decision_context"):
-                                ctx = processor.get_decision_context(
+                            # Also try the processor's own context store if ctx is empty
+                            if not ctx_for_evolution and hasattr(processor, "get_decision_context"):
+                                ctx_for_evolution = processor.get_decision_context(
                                     getattr(closed, "decision_id", None)
                                 ) or {}
-                            evolution_engine.on_trade_close(closed, ctx)
+                            evolution_engine.on_trade_close(closed, ctx_for_evolution)
                     except Exception as e:
                         logger.error(f"evolution_engine.on_trade_close error: {e}")
 
