@@ -641,6 +641,15 @@ def main():
     logger.info("   - Experience DB (SQLite): ON")
     logger.info("=" * 60)
 
+    # ---- Graceful shutdown on SIGTERM (Docker / systemd) ----
+    import signal as _signal
+
+    def _sigterm_handler(signum, frame):
+        logger.info("⏹️ SIGTERM received — initiating graceful shutdown")
+        raise KeyboardInterrupt  # reuse the existing cleanup path
+
+    _signal.signal(_signal.SIGTERM, _sigterm_handler)
+
     try:
         # ---- DB init ----
         experience_db.init_db(DB_PATH)

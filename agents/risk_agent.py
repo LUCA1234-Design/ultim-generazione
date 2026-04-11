@@ -14,7 +14,7 @@ from config.settings import ACCOUNT_BALANCE, LEVERAGE, KELLY_WARMUP_TRADES, KELL
 
 logger = logging.getLogger("RiskAgent")
 
-DEFAULT_WIN_RATE = DEFAULT_WIN_RATE_CONSERVATIVE  # Win rate conservativo (0.45)
+DEFAULT_WIN_RATE = 0.50   # break-even default — replaced by real win rate once ≥20 trades recorded
 
 # Regime-based position sizing multipliers — 5 regimi + backward compat
 _REGIME_SIZE_MULT = {
@@ -193,6 +193,9 @@ class RiskAgent(BaseAgent):
         # Apply regime multiplier
         regime_mult = _REGIME_SIZE_MULT.get(regime, 0.8)
         size = size * regime_mult
+        # Leverage cap: (size × entry) / LEVERAGE ≤ 50% of balance
+        max_size_by_margin = (self._balance * 0.5 * LEVERAGE) / max(entry, 1e-10)
+        size = min(size, max_size_by_margin)
         return round(float(size), 4)
 
     # ------------------------------------------------------------------

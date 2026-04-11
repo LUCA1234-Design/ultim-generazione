@@ -17,6 +17,10 @@ logger = logging.getLogger("ConfluenceAgent")
 
 TF_WEIGHTS = {"15m": 0.20, "1h": 0.30, "4h": 0.25, "1d": 0.25}
 TF_ORDER = ["15m", "1h", "4h", "1d"]
+# Seconds per timeframe — used to detect stale data
+_TF_SECONDS = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+# A TF is considered stale if its latest candle is older than 2× its duration
+_TF_STALE_FACTOR = 2
 
 # Bidirectional evaluation constants
 _OPPOSITE_DOMINANCE_MARGIN = 0.15   # opposite direction must exceed primary by this to flip
@@ -100,31 +104,31 @@ class ConfluenceAgent(BaseAgent):
 
             score = 0.0
             if direction == "long":
-                if rsi_val < 55: score += 0.15       # was < 50
-                if rsi_val < 40: score += 0.10       # was < 35
+                if rsi_val < 50: score += 0.15       # restored from < 55: neutral < 50 is meaningful
+                if rsi_val < 35: score += 0.10       # restored from < 40
                 if last_di_p > last_di_m: score += 0.10
-                if last_hist > 0 and prev_hist < 0: score += 0.15
-                elif last_hist > 0: score += 0.08    # was 0.05
-                if last_close < bb_lo.iloc[-1] * 1.01: score += 0.15   # was * 1.005
+                if last_hist > 0 and prev_hist < 0: score += 0.15  # MACD crossover (strong)
+                elif last_hist > 0: score += 0.05    # positive histogram only (weak)
+                if last_close < bb_lo.iloc[-1] * 1.005: score += 0.15   # tighter band proximity
                 if obv_slope > 0: score += 0.10
                 if last_delta > 0: score += 0.10
                 if sweep == 1: score += 0.20  # bullish liquidity sweep
                 # V18 additions
-                if above_vwap: score += 0.10
+                if above_vwap: score += 0.05  # reduced: VWAP above alone is a weak signal
                 if _st_long is True: score += 0.10
                 if _ema200_long is True: score += 0.08
             else:
-                if rsi_val > 45: score += 0.15       # was > 50
-                if rsi_val > 60: score += 0.10       # was > 65
+                if rsi_val > 50: score += 0.15       # restored from > 45
+                if rsi_val > 65: score += 0.10       # restored from > 60
                 if last_di_m > last_di_p: score += 0.10
-                if last_hist < 0 and prev_hist > 0: score += 0.15
-                elif last_hist < 0: score += 0.08    # was 0.05
-                if last_close > bb_up.iloc[-1] * 0.99: score += 0.15   # was * 0.995
+                if last_hist < 0 and prev_hist > 0: score += 0.15  # MACD crossover (strong)
+                elif last_hist < 0: score += 0.05    # negative histogram only (weak)
+                if last_close > bb_up.iloc[-1] * 0.995: score += 0.15   # tighter band proximity
                 if obv_slope < 0: score += 0.10
                 if last_delta < 0: score += 0.10
                 if sweep == -1: score += 0.20  # bearish liquidity sweep
                 # V18 additions
-                if not above_vwap: score += 0.10
+                if not above_vwap: score += 0.05  # reduced
                 if _st_long is False: score += 0.10
                 if _ema200_long is False: score += 0.08
 
@@ -140,10 +144,26 @@ class ConfluenceAgent(BaseAgent):
     def compute_confluence(self, symbol: str, primary_interval: str,
                             direction: str) -> Dict[str, float]:
         """Return per-TF bias scores and weighted confluence score."""
+        import time as _time
         tf_scores: Dict[str, float] = {}
         tf_directions: list = []
         for tf in TF_ORDER:
             df = data_store.get_df(symbol, tf)
+            # Staleness guard: if the most recent candle is older than 2× tf duration,
+            # treat this TF as unavailable (return neutral 0.0) to avoid acting on
+            # hours-stale data.
+            if df is not None and not df.empty:
+                tf_sec = _TF_SECONDS.get(tf, 3600)
+                try:
+                    latest_ts = df.index[-1].timestamp()
+                    if (_time.time() - latest_ts) > _TF_STALE_FACTOR * tf_sec:
+                        logger.debug(
+                            f"ConfluenceAgent: {symbol}/{tf} data is stale "
+                            f"(age={((_time.time() - latest_ts)/tf_sec):.1f}× tf) — skipped"
+                        )
+                        df = None
+                except Exception:
+                    pass
             bias = self._tf_bias(df, direction)
             tf_scores[tf] = bias
             # Determine per-TF direction based on bias vs opposite

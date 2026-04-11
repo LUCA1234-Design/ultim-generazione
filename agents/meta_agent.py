@@ -193,7 +193,14 @@ class MetaAgent(BaseAgent):
                 regime_rec = record
 
             if len(regime_rec.decisions) < META_MIN_SAMPLES:
-                weight_map[name] = agent.weight
+                # Even when there is insufficient data for the current regime,
+                # honour an existing demotion so a demoted agent is not silently
+                # re-admitted through the "not enough data" shortcut.
+                if self._demoted.get(name, False):
+                    agent.weight = _DEMOTED_WEIGHT
+                    weight_map[name] = _DEMOTED_WEIGHT
+                else:
+                    weight_map[name] = agent.weight
                 continue
 
             # --- LCB-based performance score ---

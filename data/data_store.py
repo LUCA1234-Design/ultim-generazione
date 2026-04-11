@@ -11,7 +11,10 @@ from typing import Optional, Dict, Any
 
 logger = logging.getLogger("DataStore")
 
-_lock = Lock()
+# Per-symbol locks to allow concurrent updates for different symbols
+# without the global lock becoming a bottleneck at high candle rates.
+_symbol_locks: Dict[str, Lock] = {}
+_registry_lock = Lock()  # protects _symbol_locks itself
 _historical: Dict[str, Dict[str, pd.DataFrame]] = {}   # {symbol: {interval: df}}
 _realtime: Dict[str, Dict[str, pd.DataFrame]] = {}     # {symbol: {interval: df}}
 
@@ -20,6 +23,14 @@ _indicator_cache: Dict[str, Dict[str, Any]] = {}
 _cache_lock = Lock()
 
 HISTORICAL_LIMIT = 500
+
+
+def _get_symbol_lock(symbol: str) -> Lock:
+    """Return (creating if necessary) the per-symbol lock."""
+    with _registry_lock:
+        if symbol not in _symbol_locks:
+            _symbol_locks[symbol] = Lock()
+        return _symbol_locks[symbol]
 
 
 def _parse_klines(klines: list) -> Optional[pd.DataFrame]:
@@ -51,7 +62,7 @@ def store_historical(symbol: str, interval: str, klines: list) -> None:
     df = _parse_klines(klines)
     if df is None or df.empty:
         return
-    with _lock:
+    with _get_symbol_lock(symbol):
         if symbol not in _historical:
             _historical[symbol] = {}
         if symbol not in _realtime:
@@ -77,7 +88,7 @@ def update_realtime(symbol: str, interval: str, kline: dict) -> None:
             "taker_buy_vol": float(kline.get("V", 0)),
         }
         idx = pd.to_datetime(open_time_ms, unit="ms", utc=True)
-        with _lock:
+        with _get_symbol_lock(symbol):
             if symbol not in _realtime:
                 _realtime[symbol] = {}
             df = _realtime[symbol].get(interval)
@@ -102,7 +113,7 @@ def update_realtime(symbol: str, interval: str, kline: dict) -> None:
 
 def get_df(symbol: str, interval: str) -> Optional[pd.DataFrame]:
     """Return the most up-to-date DataFrame for a symbol/interval."""
-    with _lock:
+    with _get_symbol_lock(symbol):
         rt = _realtime.get(symbol, {}).get(interval)
         if rt is not None and not rt.empty:
             return rt.copy()
@@ -114,7 +125,7 @@ def get_df(symbol: str, interval: str) -> Optional[pd.DataFrame]:
 
 def get_all_symbols() -> list:
     """Return list of all symbols currently stored."""
-    with _lock:
+    with _registry_lock:
         return list(_historical.keys())
 
 
@@ -150,10 +161,10 @@ def get_avg_volume(symbol: str, interval: str, lookback: int = 20) -> Optional[f
 
 def clear_symbol(symbol: str) -> None:
     """Remove all stored data for a symbol."""
-    with _lock:
+    with _get_symbol_lock(symbol):
         _historical.pop(symbol, None)
         _realtime.pop(symbol, None)
-    # Rimuove anche la cache degli indicatori per questo symbol
+    # Remove indicator cache for this symbol
     with _cache_lock:
         keys_to_remove = [k for k in _indicator_cache if k.startswith(f"{symbol}_")]
         for k in keys_to_remove:
