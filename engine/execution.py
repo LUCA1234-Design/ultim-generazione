@@ -4,6 +4,7 @@ Paper trading (default, PAPER_TRADING=True) simulates orders and tracks P&L.
 Real mode uses Binance Futures futures_create_order() via binance_client.
 """
 import logging
+import threading
 import time
 import datetime
 import uuid
@@ -19,6 +20,8 @@ from config.settings import (
     MAX_DAILY_LOSS_USDT,
     MAX_DAILY_LOSS_PCT,
     MAX_CONSECUTIVE_LOSSES,
+    MAX_TOTAL_DRAWDOWN_PCT,
+    MAX_WEEKLY_LOSS_PCT,
 )
 from data.binance_client import place_futures_order
 
@@ -56,6 +59,7 @@ class Position:
     tp2_hit: bool = False
     decision_id: str = ""
     paper: bool = True
+    tp1_partial_pnl: Optional[float] = None   # PnL parziale registrato alla chiusura 50% a TP1
 
     def unrealised_pnl(self, current_price: float) -> float:
         if self.direction == "long":
@@ -103,6 +107,12 @@ class ExecutionEngine:
         self._daily_pnl = 0.0
         self._consecutive_losses = 0
         self._current_day = datetime.datetime.now(datetime.timezone.utc).date()
+        # Lock per thread-safety tra position monitor e WebSocket thread
+        self._lock = threading.Lock()
+        # Drawdown protection: peak balance e P&L settimanale (non-resettanti)
+        self._peak_balance = initial_balance
+        self._weekly_pnl = 0.0
+        self._week_start = datetime.datetime.now(datetime.timezone.utc).isocalendar()[1]
         logger.info(
             f"ExecutionEngine: {'PAPER' if paper_trading else 'LIVE'} trading | "
             f"balance={initial_balance}"
@@ -112,8 +122,15 @@ class ExecutionEngine:
         if today != self._current_day:
             self._current_day = today
             self._daily_pnl = 0.0
-            self._consecutive_losses = 0
+            # consecutive_losses NON viene azzerato al cambio giorno —
+            # si azzera SOLO dopo un trade profittevole (in close_position)
             logger.info("🔄 Daily risk counters reset")
+        # Reset settimanale P&L se la settimana ISO è cambiata
+        current_week = datetime.datetime.now(datetime.timezone.utc).isocalendar()[1]
+        if current_week != self._week_start:
+            self._week_start = current_week
+            self._weekly_pnl = 0.0
+            logger.info("🔄 Weekly PnL reset")
 
     def is_risk_blocked(self) -> tuple[bool, str, dict]:
         self._roll_day_if_needed()
@@ -124,6 +141,17 @@ class ExecutionEngine:
             if self._initial_balance > 0 else 0.0
         )
 
+        # Drawdown totale dal peak balance
+        total_drawdown_pct = (
+            (self._peak_balance - self._balance) / self._peak_balance * 100
+            if self._peak_balance > 0 else 0.0
+        )
+        # Perdita settimanale (solo perdite, non guadagni)
+        weekly_loss_pct = (
+            abs(min(0.0, self._weekly_pnl)) / self._initial_balance * 100
+            if self._initial_balance > 0 else 0.0
+        )
+
         details = {
             "daily_loss_usdt": daily_loss_usdt,
             "daily_loss_pct": daily_loss_pct,
@@ -131,6 +159,10 @@ class ExecutionEngine:
             "daily_loss_usdt_max": MAX_DAILY_LOSS_USDT,
             "consecutive_losses": self._consecutive_losses,
             "consecutive_losses_max": MAX_CONSECUTIVE_LOSSES,
+            "total_drawdown_pct": total_drawdown_pct,
+            "total_drawdown_pct_max": MAX_TOTAL_DRAWDOWN_PCT,
+            "weekly_loss_pct": weekly_loss_pct,
+            "weekly_loss_pct_max": MAX_WEEKLY_LOSS_PCT,
         }
 
         if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
@@ -141,6 +173,12 @@ class ExecutionEngine:
 
         if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
             return True, "max_consecutive_losses", details
+
+        if total_drawdown_pct >= MAX_TOTAL_DRAWDOWN_PCT:
+            return True, "max_total_drawdown", details
+
+        if weekly_loss_pct >= MAX_WEEKLY_LOSS_PCT:
+            return True, "max_weekly_loss", details
 
         return False, "", details
 
@@ -169,60 +207,95 @@ class ExecutionEngine:
             paper=self.paper_trading,
         )
 
-        if self.paper_trading:
-            self._open_positions[pos_id] = pos
-            logger.info(
-                f"📄 PAPER OPEN [{pos_id}] {symbol} {direction.upper()} "
-                f"@ {entry_price:.4f} size={size} sl={sl:.4f} tp1={tp1:.4f}"
-            )
-        else:
-            # Real execution
-            side = "BUY" if direction == "long" else "SELL"
-            order = place_futures_order(symbol, side, "MARKET", size)
-            if order is None:
-                logger.error(f"Failed to open live position for {symbol}")
-                return None
-            self._open_positions[pos_id] = pos
-            logger.info(f"✅ LIVE OPEN [{pos_id}] {symbol} {direction.upper()} {order}")
+        with self._lock:
+            if self.paper_trading:
+                self._open_positions[pos_id] = pos
+                logger.info(
+                    f"📄 PAPER OPEN [{pos_id}] {symbol} {direction.upper()} "
+                    f"@ {entry_price:.4f} size={size} sl={sl:.4f} tp1={tp1:.4f}"
+                )
+            else:
+                # Esecuzione reale: leggo il fill price effettivo da Binance
+                side = "BUY" if direction == "long" else "SELL"
+                order = place_futures_order(symbol, side, "MARKET", size)
+                if order is None:
+                    logger.error(f"Failed to open live position for {symbol}")
+                    return None
+                # Aggiorna l'entry price con il fill price reale
+                real_entry = float(order.get("avgPrice", entry_price))
+                if real_entry > 0:
+                    slippage_pct = abs(real_entry - entry_price) / entry_price * 100
+                    logger.info(
+                        f"💹 Slippage: requested={entry_price:.4f} "
+                        f"filled={real_entry:.4f} diff={slippage_pct:.3f}%"
+                    )
+                    # Ricalcola SL/TP se lo slippage è significativo (>0.1%)
+                    if slippage_pct > 0.1:
+                        sl_dist = abs(sl - entry_price)
+                        tp1_dist = abs(tp1 - entry_price)
+                        tp2_dist = abs(tp2 - entry_price)
+                        if direction == "long":
+                            pos.sl = real_entry - sl_dist
+                            pos.tp1 = real_entry + tp1_dist
+                            pos.tp2 = real_entry + tp2_dist
+                        else:
+                            pos.sl = real_entry + sl_dist
+                            pos.tp1 = real_entry - tp1_dist
+                            pos.tp2 = real_entry - tp2_dist
+                    pos.entry_price = real_entry
+                self._open_positions[pos_id] = pos
+                logger.info(f"✅ LIVE OPEN [{pos_id}] {symbol} {direction.upper()} {order}")
 
         return pos
 
     def close_position(self, position_id: str, close_price: float,
                         reason: str = "manual") -> Optional[Position]:
         """Close an open position."""
-        pos = self._open_positions.pop(position_id, None)
+        with self._lock:
+            pos = self._open_positions.pop(position_id, None)
         if pos is None:
             return None
+
+        if not self.paper_trading:
+            # Live: piazza l'ordine di chiusura e leggi il fill price reale
+            side = "SELL" if pos.direction == "long" else "BUY"
+            close_order = place_futures_order(pos.symbol, side, "MARKET", pos.size, reduce_only=True)
+            if close_order is not None:
+                real_close = float(close_order.get("avgPrice", close_price))
+                if real_close > 0:
+                    close_price = real_close
 
         pos.close_price = close_price
         pos.close_time = time.time()
         pos.pnl = pos.unrealised_pnl(close_price)
         pos.status = reason
         self._roll_day_if_needed()
-        self._balance += pos.pnl
-        self._total_pnl += pos.pnl
-        self._daily_pnl += pos.pnl
-        self._trade_count += 1
 
-        if pos.pnl > 0:
-            self._win_count += 1
-            self._consecutive_losses = 0
-        else:
-            self._consecutive_losses += 1
+        with self._lock:
+            self._balance += pos.pnl
+            self._total_pnl += pos.pnl
+            self._daily_pnl += pos.pnl
+            self._weekly_pnl += pos.pnl
+            self._trade_count += 1
+            # Aggiorna il peak balance per il calcolo del drawdown
+            self._peak_balance = max(self._peak_balance, self._balance)
 
-        self._closed_positions.append(pos)
-        if len(self._closed_positions) > 1000:
-            del self._closed_positions[:100]
+            if pos.pnl > 0:
+                self._win_count += 1
+                self._consecutive_losses = 0  # Reset SOLO dopo un trade profittevole
+            else:
+                self._consecutive_losses += 1
+
+            self._closed_positions.append(pos)
+            if len(self._closed_positions) > 1000:
+                del self._closed_positions[:100]
+
         emoji = "✅" if pos.pnl > 0 else "❌"
         logger.info(
             f"{emoji} {'PAPER ' if pos.paper else ''}CLOSE [{position_id}] "
             f"{pos.symbol} {pos.direction.upper()} @ {close_price:.4f} "
             f"PnL={pos.pnl:+.4f} ({reason})"
         )
-
-        if not self.paper_trading:
-            side = "SELL" if pos.direction == "long" else "BUY"
-            place_futures_order(pos.symbol, side, "MARKET", pos.size, reduce_only=True)
 
         return pos
 
@@ -231,7 +304,10 @@ class ExecutionEngine:
         to_close: List[Tuple[str, float, str]] = []
         closed_positions: List[Position] = []
 
-        for pos_id, pos in list(self._open_positions.items()):
+        with self._lock:
+            snapshot = list(self._open_positions.items())
+
+        for pos_id, pos in snapshot:
             if pos.symbol != symbol:
                 continue
 
@@ -250,9 +326,29 @@ class ExecutionEngine:
                     to_close.append((pos_id, current_price, "sl_hit"))
                 elif not pos.tp1_hit and current_price >= pos.tp1:
                     pos.tp1_hit = True
-                    # Move SL to entry (breakeven)
+                    # Partial take profit: chiude 50% della posizione
+                    partial_size = pos.size / 2.0
+                    partial_pnl = (current_price - pos.entry_price) * partial_size
+                    pos.tp1_partial_pnl = partial_pnl
+                    pos.size = partial_size
+                    # Sposta SL a breakeven
                     pos.sl = pos.entry_price
-                    logger.info(f"🎯 TP1 hit [{pos_id}] {pos.symbol} — SL moved to entry")
+                    logger.info(
+                        f"🎯 TP1 hit [{pos_id}] {pos.symbol} — "
+                        f"closed 50%, trailing remaining 50% | partial_pnl={partial_pnl:+.4f}"
+                    )
+                    # In live trading, piazza ordine MARKET per la metà della size
+                    if not self.paper_trading:
+                        try:
+                            place_futures_order(pos.symbol, "SELL", "MARKET", partial_size, reduce_only=True)
+                        except Exception as _e:
+                            logger.error(f"Partial TP1 order error [{pos_id}]: {_e}")
+                    with self._lock:
+                        self._balance += partial_pnl
+                        self._total_pnl += partial_pnl
+                        self._daily_pnl += partial_pnl
+                        self._weekly_pnl += partial_pnl
+                        self._peak_balance = max(self._peak_balance, self._balance)
                 elif pos.tp1_hit and not pos.tp2_hit and current_price >= pos.tp2:
                     pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
@@ -268,8 +364,28 @@ class ExecutionEngine:
                     to_close.append((pos_id, current_price, "sl_hit"))
                 elif not pos.tp1_hit and current_price <= pos.tp1:
                     pos.tp1_hit = True
+                    # Partial take profit: chiude 50% della posizione
+                    partial_size = pos.size / 2.0
+                    partial_pnl = (pos.entry_price - current_price) * partial_size
+                    pos.tp1_partial_pnl = partial_pnl
+                    pos.size = partial_size
                     pos.sl = pos.entry_price
-                    logger.info(f"🎯 TP1 hit [{pos_id}] {pos.symbol} — SL moved to entry")
+                    logger.info(
+                        f"🎯 TP1 hit [{pos_id}] {pos.symbol} — "
+                        f"closed 50%, trailing remaining 50% | partial_pnl={partial_pnl:+.4f}"
+                    )
+                    # In live trading, piazza ordine MARKET per la metà della size
+                    if not self.paper_trading:
+                        try:
+                            place_futures_order(pos.symbol, "BUY", "MARKET", partial_size, reduce_only=True)
+                        except Exception as _e:
+                            logger.error(f"Partial TP1 order error [{pos_id}]: {_e}")
+                    with self._lock:
+                        self._balance += partial_pnl
+                        self._total_pnl += partial_pnl
+                        self._daily_pnl += partial_pnl
+                        self._weekly_pnl += partial_pnl
+                        self._peak_balance = max(self._peak_balance, self._balance)
                 elif pos.tp1_hit and not pos.tp2_hit and current_price <= pos.tp2:
                     pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
@@ -296,24 +412,31 @@ class ExecutionEngine:
         self._roll_day_if_needed()
         risk_blocked, risk_reason, _risk_details = self.is_risk_blocked()
 
-        return {
-            "paper_trading": self.paper_trading,
-            "balance": self._balance,
-            "initial_balance": self._initial_balance,
-            "total_pnl": self._total_pnl,
-            "pnl_pct": self._total_pnl / self._initial_balance * 100,
-            "trade_count": self._trade_count,
-            "win_count": self._win_count,
-            "win_rate": self._win_count / max(self._trade_count, 1),
-            "open_positions": len(self._open_positions),
-            "daily_pnl": self._daily_pnl,
-            "consecutive_losses": self._consecutive_losses,
-            "risk_blocked": risk_blocked,
-            "risk_block_reason": risk_reason,
-        }
+        with self._lock:
+            return {
+                "paper_trading": self.paper_trading,
+                "balance": self._balance,
+                "initial_balance": self._initial_balance,
+                "total_pnl": self._total_pnl,
+                "pnl_pct": self._total_pnl / self._initial_balance * 100,
+                "trade_count": self._trade_count,
+                "win_count": self._win_count,
+                "win_rate": self._win_count / max(self._trade_count, 1),
+                "open_positions": len(self._open_positions),
+                "daily_pnl": self._daily_pnl,
+                "weekly_pnl": self._weekly_pnl,
+                "consecutive_losses": self._consecutive_losses,
+                "risk_blocked": risk_blocked,
+                "risk_block_reason": risk_reason,
+                "peak_balance": self._peak_balance,
+                "total_drawdown_pct": (self._peak_balance - self._balance) / self._peak_balance * 100
+                    if self._peak_balance > 0 else 0.0,
+            }
 
     def get_open_positions(self) -> List[Position]:
-        return list(self._open_positions.values())
+        with self._lock:
+            return list(self._open_positions.values())
 
     def get_closed_positions(self, limit: int = 50) -> List[Position]:
-        return self._closed_positions[-limit:]
+        with self._lock:
+            return self._closed_positions[-limit:]

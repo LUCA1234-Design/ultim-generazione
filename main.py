@@ -16,6 +16,8 @@ from config.settings import (
     STARTUP_TIMEOUT, POLL_CLOSED_ENABLE, DB_PATH,
     HEARTBEAT_INTERVAL, HEARTBEAT_ENABLED,
     TRAINING_MODE, TRAINING_TARGET_TRADES,
+    TRAINING_FUSION_THRESHOLD, TRAINING_MIN_FUSION_SCORE,
+    TRAINING_MIN_AGENT_CONFIRMATIONS, TRAINING_MIN_RR, TRAINING_NON_OPTIMAL_HOUR_PENALTY,
     SNIPER_FUSION_THRESHOLD, SNIPER_MIN_FUSION_SCORE,
     SNIPER_MIN_AGENT_CONFIRMATIONS, SNIPER_MIN_RR,
     SNIPER_NON_OPTIMAL_HOUR_PENALTY, SNIPER_SIGNAL_COOLDOWN_BY_TF,
@@ -195,10 +197,20 @@ def load_universes() -> None:
 # Historical data preloading
 # ---------------------------------------------------------------------------
 
+def _interpolate_param(training_val, sniper_val, progress: float):
+    """Interpola linearmente da training_val a sniper_val.
+    progress=0.0 → training_val, progress=1.0 → sniper_val.
+    """
+    progress = float(max(0.0, min(1.0, progress)))
+    return training_val + (sniper_val - training_val) * progress
+
+
 def preload_historical(symbols, label: str = "") -> None:
     total = len(symbols)
     for idx, sym in enumerate(symbols, 1):
-        for interval in ["15m", "1h", "4h"]:
+        # Il 1d viene precaricato via REST — il WebSocket Binance non supporta
+        # klines daily in modalità stream continuo, quindi usiamo solo REST polling
+        for interval in ["15m", "1h", "4h", "1d"]:
             try:
                 klines = fetch_futures_klines(sym, interval, limit=500)
                 if klines:
@@ -794,16 +806,15 @@ def main():
             # Frequently push fresh win rates to RiskAgent (lightweight)
             tracker.update_risk_agent_win_rates(risk_agent, current_balance=execution.get_stats()["balance"])
 
-            # Auto-switch: Training Mode → Sniper Mode once enough trades are completed
+            # Auto-switch: Training Mode → Sniper Mode con transizione graduale
+            # La transizione avviene tra il trade #TRAINING_TARGET_TRADES e #(TARGET + 50)
             if TRAINING_MODE and not _sniper_mode_active:
                 try:
                     completed = experience_db.get_completed_trade_count()
-                    if completed >= TRAINING_TARGET_TRADES:
+                    _TRANSITION_TRADES = 50  # durata della transizione in trade
+                    if completed >= TRAINING_TARGET_TRADES + _TRANSITION_TRADES:
+                        # Transizione completata: applica i valori Sniper definitivi
                         _sniper_mode_active = True
-                        logger.info(
-                            f"🎓 TRAINING COMPLETATO ({completed} trade) — passaggio a Sniper Mode"
-                        )
-                        # Apply Sniper Mode thresholds to running components
                         processor.fusion.threshold = SNIPER_FUSION_THRESHOLD
                         _cfg.FUSION_THRESHOLD_DEFAULT = SNIPER_FUSION_THRESHOLD
                         _cfg.MIN_FUSION_SCORE = SNIPER_MIN_FUSION_SCORE
@@ -812,6 +823,10 @@ def main():
                         _cfg.NON_OPTIMAL_HOUR_PENALTY = SNIPER_NON_OPTIMAL_HOUR_PENALTY
                         _cfg.SIGNAL_COOLDOWN_BY_TF = SNIPER_SIGNAL_COOLDOWN_BY_TF
                         _cfg.MAX_OPEN_POSITIONS = SNIPER_MAX_OPEN_POSITIONS
+                        logger.info(
+                            f"🎓 TRAINING COMPLETATO ({completed} trade) — "
+                            f"Sniper Mode ATTIVO (transizione finita)"
+                        )
                         # V18: Transition state machine to SNIPER
                         try:
                             if state_machine is not None:
@@ -823,7 +838,7 @@ def main():
                             send_message(
                                 f"🎓 *V18 TRAINING COMPLETATO*\n\n"
                                 f"✅ {completed} trade completati\n"
-                                f"🎯 Passaggio a *Sniper Mode* — soglie alzate:\n"
+                                f"🎯 *Sniper Mode* ATTIVO — soglie finali:\n"
                                 f"  • Fusion threshold: {SNIPER_FUSION_THRESHOLD}\n"
                                 f"  • Min fusion score: {SNIPER_MIN_FUSION_SCORE}\n"
                                 f"  • Min agents: {SNIPER_MIN_AGENT_CONFIRMATIONS}\n"
@@ -831,6 +846,39 @@ def main():
                             )
                         except Exception as _notify_err:
                             logger.error(f"Sniper Mode notification error: {_notify_err}")
+                    elif completed >= TRAINING_TARGET_TRADES:
+                        # In transizione graduale: interpola linearmente i parametri
+                        _progress = (completed - TRAINING_TARGET_TRADES) / _TRANSITION_TRADES
+                        _new_threshold = _interpolate_param(
+                            TRAINING_FUSION_THRESHOLD, SNIPER_FUSION_THRESHOLD, _progress
+                        )
+                        _new_min_score = _interpolate_param(
+                            TRAINING_MIN_FUSION_SCORE, SNIPER_MIN_FUSION_SCORE, _progress
+                        )
+                        _new_min_rr = _interpolate_param(
+                            TRAINING_MIN_RR, SNIPER_MIN_RR, _progress
+                        )
+                        _new_penalty = _interpolate_param(
+                            TRAINING_NON_OPTIMAL_HOUR_PENALTY, SNIPER_NON_OPTIMAL_HOUR_PENALTY, _progress
+                        )
+                        # MIN_AGENT_CONFIRMATIONS: usa il valore sniper quando progress > 0.5
+                        _new_min_agents = (
+                            SNIPER_MIN_AGENT_CONFIRMATIONS if _progress > 0.5
+                            else TRAINING_MIN_AGENT_CONFIRMATIONS
+                        )
+                        processor.fusion.threshold = _new_threshold
+                        _cfg.FUSION_THRESHOLD_DEFAULT = _new_threshold
+                        _cfg.MIN_FUSION_SCORE = _new_min_score
+                        _cfg.MIN_AGENT_CONFIRMATIONS = _new_min_agents
+                        _cfg.MIN_RR = _new_min_rr
+                        _cfg.NON_OPTIMAL_HOUR_PENALTY = _new_penalty
+                        logger.info(
+                            f"🔄 Transizione Training→Sniper: "
+                            f"progress={_progress:.0%} | "
+                            f"threshold={_new_threshold:.3f} | "
+                            f"min_score={_new_min_score:.3f} | "
+                            f"min_rr={_new_min_rr:.2f}"
+                        )
                 except Exception as _switch_err:
                     logger.error(f"Training→Sniper auto-switch error: {_switch_err}")
 

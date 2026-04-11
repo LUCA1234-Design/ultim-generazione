@@ -10,14 +10,22 @@ from typing import Optional, Dict, Tuple
 
 from agents.base_agent import BaseAgent, AgentResult
 from indicators.technical import atr, adx
-from config.settings import ACCOUNT_BALANCE, LEVERAGE
+from config.settings import ACCOUNT_BALANCE, LEVERAGE, KELLY_WARMUP_TRADES, KELLY_WARMUP_FRACTION, DEFAULT_WIN_RATE_CONSERVATIVE
 
 logger = logging.getLogger("RiskAgent")
 
-DEFAULT_WIN_RATE = 0.55
+DEFAULT_WIN_RATE = DEFAULT_WIN_RATE_CONSERVATIVE  # Win rate conservativo (0.45)
 
-# Regime-based position sizing multipliers
-_REGIME_SIZE_MULT = {"trending": 1.0, "ranging": 0.7, "volatile": 0.5, "unknown": 0.8}
+# Regime-based position sizing multipliers — 5 regimi + backward compat
+_REGIME_SIZE_MULT = {
+    "trending_up": 1.0,
+    "trending_down": 0.8,
+    "ranging": 0.7,
+    "volatile": 0.5,
+    "capitulation": 0.2,
+    "unknown": 0.8,
+    "trending": 1.0,   # backward compat
+}
 
 # Structural SL constants
 _STRUCTURAL_SL_BUFFER = 0.001   # 0.1% price buffer beyond swing level
@@ -159,12 +167,27 @@ class RiskAgent(BaseAgent):
     def calc_position_size(self, entry: float, sl: float,
                             win_rate: float = DEFAULT_WIN_RATE,
                             rr: float = 2.0,
-                            regime: str = "unknown") -> float:
-        """Return position size in base currency units."""
+                            regime: str = "unknown",
+                            total_trades: int = 0) -> float:
+        """Return position size in base currency units.
+
+        Durante il warmup (primi KELLY_WARMUP_TRADES trade) interpola linearmente
+        da 1/4-Kelly a 1/2-Kelly per ridurre il rischio iniziale.
+        """
         risk_per_unit = abs(entry - sl)
         if risk_per_unit < 1e-10:
             return 0.0
         k = self.kelly_fraction(win_rate, rr)
+
+        # Kelly warmup: interpola da 1/4-Kelly a 1/2-Kelly tra trade 0 e KELLY_WARMUP_TRADES
+        if total_trades < KELLY_WARMUP_TRADES:
+            progress = total_trades / KELLY_WARMUP_TRADES  # 0.0 → 1.0
+            # KELLY_WARMUP_FRACTION=0.25 = 1/4-Kelly; 0.5 = 1/2-Kelly (già applicato in kelly_fraction)
+            warmup_mult = KELLY_WARMUP_FRACTION + (0.5 - KELLY_WARMUP_FRACTION) * progress
+            # kelly_fraction già applica 0.5× (Half-Kelly), quindi warm_up_mult è relativo al full kelly
+            # Ri-normalizziamo: k è già half-kelly, vogliamo scalarlo ulteriormente
+            k = k * warmup_mult / 0.5
+
         risk_amount = self._balance * k
         size = risk_amount / risk_per_unit
         # Apply regime multiplier

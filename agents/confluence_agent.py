@@ -15,8 +15,8 @@ from data import data_store
 
 logger = logging.getLogger("ConfluenceAgent")
 
-TF_WEIGHTS = {"15m": 0.25, "1h": 0.40, "4h": 0.35}
-TF_ORDER = ["15m", "1h", "4h"]
+TF_WEIGHTS = {"15m": 0.20, "1h": 0.30, "4h": 0.25, "1d": 0.25}
+TF_ORDER = ["15m", "1h", "4h", "1d"]
 
 # Bidirectional evaluation constants
 _OPPOSITE_DOMINANCE_MARGIN = 0.15   # opposite direction must exceed primary by this to flip

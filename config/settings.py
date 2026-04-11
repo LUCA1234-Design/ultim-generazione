@@ -45,6 +45,10 @@ MAX_DAILY_LOSS_USDT = 50.0
 MAX_DAILY_LOSS_PCT = 5.0
 MAX_CONSECUTIVE_LOSSES = 3
 
+# Drawdown protection (non-resettanti giornalmente)
+MAX_TOTAL_DRAWDOWN_PCT = 15.0      # Max drawdown totale dal peak balance
+MAX_WEEKLY_LOSS_PCT = 8.0          # Max perdita settimanale
+
 MIN_FUSION_SCORE = 0.50          # Raised from 0.25: sniper calibration — only high-confidence signals
 MIN_AGENT_CONFIRMATIONS = 4      # Raised from 3: require more agent consensus
 NON_OPTIMAL_HOUR_PENALTY = 0.05  # Raised from 0.01: significant penalty outside optimal hours
@@ -132,8 +136,8 @@ DB_PATH = "v17_experience.db"
 # REGIME AGENT
 # ============================================================
 
-REGIME_N_COMPONENTS = 3       # Number of Gaussian mixture components
-REGIME_NAMES = ["trending", "ranging", "volatile"]
+REGIME_N_COMPONENTS = 5       # Number of Gaussian mixture components
+REGIME_NAMES = ["trending_up", "trending_down", "ranging", "volatile", "capitulation"]
 REGIME_LOOKBACK = 100
 
 # ============================================================
@@ -303,3 +307,11 @@ BACKTEST_MIN_WIN_RATE = 0.45
 BACKTEST_MAX_DRAWDOWN = 0.20
 BACKTEST_VALIDATION_INTERVAL = 7200
 BACKTEST_MIN_TRADES = 20
+
+# ============================================================
+# KELLY WARMUP
+# ============================================================
+
+KELLY_WARMUP_TRADES = 50           # Primi N trade: usa 1/4-Kelly
+KELLY_WARMUP_FRACTION = 0.25      # Moltiplicatore Kelly durante warmup
+DEFAULT_WIN_RATE_CONSERVATIVE = 0.45  # Win rate default conservativo (era 0.55)

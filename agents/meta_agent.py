@@ -414,13 +414,45 @@ class MetaAgent(BaseAgent):
         if regime:
             details.append(f"regime={regime}")
 
+        # Direction voting: analizza i record recenti per il regime corrente
+        direction = "neutral"
+        direction_confidence = meta_score
+        if regime and regime in self._regime_records:
+            # Raccogli tutte le decisioni recenti per il regime corrente
+            all_decisions = []
+            for rec in self._regime_records[regime].values():
+                all_decisions.extend(rec.decisions[-META_EVAL_WINDOW:])
+
+            # Conta win rate long vs short nelle ultime decisioni
+            long_wins = sum(1 for d in all_decisions if d.get("direction") == "long" and d.get("correct"))
+            long_total = sum(1 for d in all_decisions if d.get("direction") == "long")
+            short_wins = sum(1 for d in all_decisions if d.get("direction") == "short" and d.get("correct"))
+            short_total = sum(1 for d in all_decisions if d.get("direction") == "short")
+
+            min_samples = META_MIN_SAMPLES
+            long_wr = long_wins / long_total if long_total >= min_samples else 0.5
+            short_wr = short_wins / short_total if short_total >= min_samples else 0.5
+
+            if long_total >= min_samples or short_total >= min_samples:
+                wr_gap = long_wr - short_wr
+                if wr_gap > 0.10:
+                    direction = "long"
+                    direction_confidence = float(np.clip(meta_score + wr_gap * 0.5, 0.0, 1.0))
+                    details.append(f"dir_vote=long(gap={wr_gap:.2f})")
+                elif wr_gap < -0.10:
+                    direction = "short"
+                    direction_confidence = float(np.clip(meta_score + abs(wr_gap) * 0.5, 0.0, 1.0))
+                    details.append(f"dir_vote=short(gap={wr_gap:.2f})")
+                else:
+                    details.append(f"dir_vote=neutral(gap={wr_gap:.2f})")
+
         return AgentResult(
             agent_name=self.name,
             symbol=symbol,
             interval=interval,
             score=float(np.clip(meta_score, 0.0, 1.0)),
-            direction="neutral",
-            confidence=meta_score,
+            direction=direction,
+            confidence=direction_confidence,
             details=details,
             metadata={"report": report, "regime": regime},
         )

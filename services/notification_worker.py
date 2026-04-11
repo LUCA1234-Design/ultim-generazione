@@ -42,7 +42,11 @@ def enqueue_signal_notification(
         _signal_queue.put_nowait(job)
         return True
     except queue.Full:
-        logger.error("Notification queue full: dropping signal job")
+        logger.warning("Notification queue full — sending synchronously as fallback")
+        try:
+            _process_signal_job(job)
+        except Exception as e:
+            logger.error(f"Fallback sync notification also failed: {e}")
         return False
 
 

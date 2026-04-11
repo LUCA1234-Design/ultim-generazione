@@ -109,7 +109,10 @@ class RegimeAgent(BaseAgent):
 
     def _assign_regime_labels(self, key: tuple, scaler: StandardScaler,
                                gmm: GaussianMixture, features: np.ndarray) -> None:
-        """Assign human-readable labels to GMM components based on mean ADX & BB/KC ratio."""
+        """Assign human-readable labels to GMM components based on mean ADX, BB/KC ratio,
+        volume and EMA slope. Supporta 5 regimi: trending_up, trending_down, ranging,
+        volatile, capitulation.
+        """
         if not hasattr(gmm, "means_"):
             return
         means = scaler.inverse_transform(gmm.means_)
@@ -117,26 +120,37 @@ class RegimeAgent(BaseAgent):
         adx_means = means[:, 0]
         bb_kc_means = means[:, 1]
         vol_means = means[:, 4]
+        ema_slope_means = means[:, 5]
 
-        # Rank components
+        # Rank components per ADX (decrescente)
         regime_labels: Dict[int, str] = {}
         sorted_by_adx = np.argsort(adx_means)[::-1]
         for rank, idx in enumerate(sorted_by_adx):
-            if rank == 0:
-                # Highest ADX → trending
-                if bb_kc_means[idx] > 1.0:
-                    regime_labels[idx] = "volatile"
-                else:
-                    regime_labels[idx] = "trending"
-            elif bb_kc_means[idx] < 0.7:
-                regime_labels[idx] = "ranging"
-            else:
-                regime_labels[idx] = "volatile"
+            adx_val = adx_means[idx]
+            bb_kc = bb_kc_means[idx]
+            vol = vol_means[idx]
+            slope = ema_slope_means[idx]
 
-        # Fill any unlabelled
+            if rank == 0 and bb_kc > 1.5 and vol > 1.5:
+                # Volatilità estrema + volume spike = capitulation
+                regime_labels[idx] = "capitulation"
+            elif adx_val > 25 and bb_kc > 1.0:
+                # ADX alto e BB > KC = volatile
+                regime_labels[idx] = "volatile"
+            elif adx_val > 20 and slope > 0:
+                # ADX alto con pendenza positiva = trending_up
+                regime_labels[idx] = "trending_up"
+            elif adx_val > 20 and slope <= 0:
+                # ADX alto con pendenza negativa = trending_down
+                regime_labels[idx] = "trending_down"
+            else:
+                # ADX basso = ranging
+                regime_labels[idx] = "ranging"
+
+        # Assicura che i label mancanti vengano assegnati
+        all_regimes = list(self.REGIMES)
         used = set(regime_labels.values())
-        all_regimes = set(self.REGIMES)
-        missing = list(all_regimes - used)
+        missing = [r for r in all_regimes if r not in used]
         for idx in range(self.n_components):
             if idx not in regime_labels and missing:
                 regime_labels[idx] = missing.pop()
@@ -207,19 +221,28 @@ class RegimeAgent(BaseAgent):
         if probs is None:
             return None
 
-        trending_prob = probs.get("trending", 0.0)
+        # Probabilità per i 5 regimi (+ backward compat)
+        trending_up_prob = probs.get("trending_up", 0.0)
+        trending_down_prob = probs.get("trending_down", 0.0)
         ranging_prob = probs.get("ranging", 0.0)
         volatile_prob = probs.get("volatile", 0.0)
+        capitulation_prob = probs.get("capitulation", 0.0)
+        # Backward compat: "trending" è la somma di trending_up e trending_down
+        trending_prob = probs.get("trending", trending_up_prob + trending_down_prob)
         regime = max(probs, key=probs.get)
         regime_prob = probs[regime]
 
-        # Score: trending regime is most favourable for directional trades
-        if regime == "trending":
-            score = 0.75 + 0.25 * trending_prob   # was 0.7 + 0.3
+        # Score: trending_up è il più favorevole, capitulation il peggiore
+        if regime in ("trending_up", "trending"):
+            score = 0.75 + 0.25 * max(trending_up_prob, trending_prob)
+        elif regime == "trending_down":
+            score = 0.65 + 0.20 * trending_down_prob
         elif regime == "volatile":
-            score = 0.55 + 0.20 * volatile_prob    # was 0.4 + 0.2
+            score = 0.55 + 0.20 * volatile_prob
+        elif regime == "capitulation":
+            score = 0.25 + 0.10 * capitulation_prob  # molto penalizzato
         else:  # ranging
-            score = 0.50 + 0.25 * ranging_prob     # was 0.45 + 0.2 — raised base
+            score = 0.50 + 0.25 * ranging_prob
 
         # Determine direction hint from ADX +DI/-DI
         try:
@@ -230,9 +253,11 @@ class RegimeAgent(BaseAgent):
 
         details = [
             f"regime={regime}({regime_prob:.0%})",
-            f"trending={trending_prob:.0%}",
+            f"trending_up={trending_up_prob:.0%}",
+            f"trending_down={trending_down_prob:.0%}",
             f"ranging={ranging_prob:.0%}",
             f"volatile={volatile_prob:.0%}",
+            f"capitulation={capitulation_prob:.0%}",
         ]
 
         return AgentResult(

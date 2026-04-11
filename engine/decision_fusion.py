@@ -30,12 +30,15 @@ DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
 
-# Regime-aware threshold multipliers
+# Regime-aware threshold multipliers — 5 regimi + backward compat
 _REGIME_THRESHOLD_MULTIPLIERS = {
-    "trending": 0.85,
+    "trending_up": 0.85,
+    "trending_down": 0.90,   # Slightly harder for shorts (trend bias)
     "ranging": 1.20,
     "volatile": 1.10,
+    "capitulation": 1.50,    # Molto penalizzato — evitare di tradare in capitulation
     "unknown": 1.0,
+    "trending": 0.85,        # Backward compat
 }
 
 
