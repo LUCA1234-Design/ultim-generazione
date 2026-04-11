@@ -226,7 +226,9 @@ if TRAINING_MODE:
 # ============================================================
 
 HIGH_MARGIN_ONLY = True              # Se True, invia notifiche Telegram SOLO per segnali con R/R >= HIGH_MARGIN_MIN_RR
-HIGH_MARGIN_MIN_RR = 2.5             # R/R minimo per considerare un segnale "high margin"
+HIGH_MARGIN_MIN_RR = 1.60            # R/R minimo per segnale "high margin" — allineato a SNIPER_MIN_RR (1.60)
+                                     # Il R/R base del RiskAgent è 1.67 (SL=1.5×ATR, TP1=2.5×ATR), quindi
+                                     # con 2.5 TUTTI i segnali venivano bloccati in Training Mode.
 HIGH_MARGIN_MIN_FUSION_SCORE = 0.55  # Fusion score minimo per segnali high margin
 HIGH_MARGIN_BADGE = "🔥 HIGH MARGIN" # Badge da aggiungere ai messaggi
 
