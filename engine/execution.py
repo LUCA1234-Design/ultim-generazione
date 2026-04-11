@@ -95,6 +95,7 @@ class ExecutionEngine:
         self.paper_trading = paper_trading
         self._balance = initial_balance
         self._initial_balance = initial_balance
+        self._peak_balance = initial_balance          # tracks all-time high for drawdown calc
         self._open_positions: Dict[str, Position] = {}   # position_id → Position
         self._closed_positions: List[Position] = []
         self._total_pnl = 0.0
@@ -103,10 +104,12 @@ class ExecutionEngine:
         self._daily_pnl = 0.0
         self._consecutive_losses = 0
         self._current_day = datetime.datetime.now(datetime.timezone.utc).date()
+        self._lock = __import__("threading").Lock()  # protects balance/daily-pnl updates
         logger.info(
             f"ExecutionEngine: {'PAPER' if paper_trading else 'LIVE'} trading | "
             f"balance={initial_balance}"
         )
+
     def _roll_day_if_needed(self) -> None:
         today = datetime.datetime.now(datetime.timezone.utc).date()
         if today != self._current_day:
@@ -116,31 +119,32 @@ class ExecutionEngine:
             logger.info("🔄 Daily risk counters reset")
 
     def is_risk_blocked(self) -> tuple[bool, str, dict]:
-        self._roll_day_if_needed()
+        with self._lock:
+            self._roll_day_if_needed()
 
-        daily_loss_usdt = max(0.0, -self._daily_pnl)
-        daily_loss_pct = (
-            (daily_loss_usdt / self._initial_balance) * 100
-            if self._initial_balance > 0 else 0.0
-        )
+            daily_loss_usdt = max(0.0, -self._daily_pnl)
+            daily_loss_pct = (
+                (daily_loss_usdt / self._initial_balance) * 100
+                if self._initial_balance > 0 else 0.0
+            )
 
-        details = {
-            "daily_loss_usdt": daily_loss_usdt,
-            "daily_loss_pct": daily_loss_pct,
-            "daily_loss_pct_max": MAX_DAILY_LOSS_PCT,
-            "daily_loss_usdt_max": MAX_DAILY_LOSS_USDT,
-            "consecutive_losses": self._consecutive_losses,
-            "consecutive_losses_max": MAX_CONSECUTIVE_LOSSES,
-        }
+            details = {
+                "daily_loss_usdt": daily_loss_usdt,
+                "daily_loss_pct": daily_loss_pct,
+                "daily_loss_pct_max": MAX_DAILY_LOSS_PCT,
+                "daily_loss_usdt_max": MAX_DAILY_LOSS_USDT,
+                "consecutive_losses": self._consecutive_losses,
+                "consecutive_losses_max": MAX_CONSECUTIVE_LOSSES,
+            }
 
-        if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
-            return True, "max_daily_loss_usdt", details
+            if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
+                return True, "max_daily_loss_usdt", details
 
-        if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
-            return True, "max_daily_loss_pct", details
+            if daily_loss_pct >= MAX_DAILY_LOSS_PCT:
+                return True, "max_daily_loss_pct", details
 
-        if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
-            return True, "max_consecutive_losses", details
+            if self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES:
+                return True, "max_consecutive_losses", details
 
         return False, "", details
 
@@ -182,8 +186,15 @@ class ExecutionEngine:
             if order is None:
                 logger.error(f"Failed to open live position for {symbol}")
                 return None
+            # Use actual fill price from exchange response to avoid slippage error
+            try:
+                fill_price = float(order.get("avgPrice") or order.get("price") or entry_price)
+                if fill_price > 0:
+                    pos.entry_price = fill_price
+            except Exception:
+                pass
             self._open_positions[pos_id] = pos
-            logger.info(f"✅ LIVE OPEN [{pos_id}] {symbol} {direction.upper()} {order}")
+            logger.info(f"✅ LIVE OPEN [{pos_id}] {symbol} {direction.upper()} fill={pos.entry_price:.4f} {order}")
 
         return pos
 
@@ -198,17 +209,20 @@ class ExecutionEngine:
         pos.close_time = time.time()
         pos.pnl = pos.unrealised_pnl(close_price)
         pos.status = reason
-        self._roll_day_if_needed()
-        self._balance += pos.pnl
-        self._total_pnl += pos.pnl
-        self._daily_pnl += pos.pnl
-        self._trade_count += 1
-
-        if pos.pnl > 0:
-            self._win_count += 1
-            self._consecutive_losses = 0
-        else:
-            self._consecutive_losses += 1
+        with self._lock:
+            self._roll_day_if_needed()
+            self._balance += pos.pnl
+            self._total_pnl += pos.pnl
+            self._daily_pnl += pos.pnl
+            self._trade_count += 1
+            # Update peak balance for drawdown tracking
+            if self._balance > self._peak_balance:
+                self._peak_balance = self._balance
+            if pos.pnl > 0:
+                self._win_count += 1
+                self._consecutive_losses = 0
+            else:
+                self._consecutive_losses += 1
 
         self._closed_positions.append(pos)
         if len(self._closed_positions) > 1000:
@@ -293,24 +307,25 @@ class ExecutionEngine:
     # ------------------------------------------------------------------
 
     def get_stats(self) -> Dict[str, Any]:
-        self._roll_day_if_needed()
-        risk_blocked, risk_reason, _risk_details = self.is_risk_blocked()
-
-        return {
-            "paper_trading": self.paper_trading,
-            "balance": self._balance,
-            "initial_balance": self._initial_balance,
-            "total_pnl": self._total_pnl,
-            "pnl_pct": self._total_pnl / self._initial_balance * 100,
-            "trade_count": self._trade_count,
-            "win_count": self._win_count,
-            "win_rate": self._win_count / max(self._trade_count, 1),
-            "open_positions": len(self._open_positions),
-            "daily_pnl": self._daily_pnl,
-            "consecutive_losses": self._consecutive_losses,
-            "risk_blocked": risk_blocked,
-            "risk_block_reason": risk_reason,
-        }
+        with self._lock:
+            self._roll_day_if_needed()
+            risk_blocked, risk_reason, _risk_details = self.is_risk_blocked()
+            return {
+                "paper_trading": self.paper_trading,
+                "balance": self._balance,
+                "initial_balance": self._initial_balance,
+                "peak_balance": self._peak_balance,
+                "total_pnl": self._total_pnl,
+                "pnl_pct": self._total_pnl / self._initial_balance * 100,
+                "trade_count": self._trade_count,
+                "win_count": self._win_count,
+                "win_rate": self._win_count / max(self._trade_count, 1),
+                "open_positions": len(self._open_positions),
+                "daily_pnl": self._daily_pnl,
+                "consecutive_losses": self._consecutive_losses,
+                "risk_blocked": risk_blocked,
+                "risk_block_reason": risk_reason,
+            }
 
     def get_open_positions(self) -> List[Position]:
         return list(self._open_positions.values())

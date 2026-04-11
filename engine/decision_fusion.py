@@ -25,7 +25,7 @@ except ImportError:
 _SNIPER_MIN_DIRECTION_AGREEMENT = 0.60   # minimum fraction of directional agents that must agree
 _SNIPER_MIN_AGREEING_TIMEFRAMES = 2      # minimum timeframes agreeing for MTF confluence
 _SNIPER_MIN_STRONG_AGENTS = 3            # minimum agents with score >= threshold for signal
-_SNIPER_AGENT_MIN_SCORE = 0.45           # each agent must have at least this score
+_SNIPER_AGENT_MIN_SCORE = 0.55           # raised from 0.45: agents at 0.45 are near-noise
 DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"
@@ -177,7 +177,13 @@ class DecisionFusion:
                 continue
             w = self._weights.get(name, 1.0)
             agent_scores[name] = result.score
-            weighted_score += result.score * w
+
+            # ContrarianAgent uses inverted semantics: high score = "don't trade".
+            # Invert its score before it enters the weighted average so that a
+            # strong contrarian signal suppresses rather than boosts the total.
+            effective_score = (1.0 - result.score) if name == "contrarian" else result.score
+
+            weighted_score += effective_score * w
             total_weight += w
             if result.direction in direction_votes:
                 direction_votes[result.direction] += w * result.confidence

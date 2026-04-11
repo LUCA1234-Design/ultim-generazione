@@ -14,7 +14,7 @@ from config.settings import ACCOUNT_BALANCE, LEVERAGE
 
 logger = logging.getLogger("RiskAgent")
 
-DEFAULT_WIN_RATE = 0.55
+DEFAULT_WIN_RATE = 0.50   # break-even default — replaced by real win rate once ≥20 trades recorded
 
 # Regime-based position sizing multipliers
 _REGIME_SIZE_MULT = {"trending": 1.0, "ranging": 0.7, "volatile": 0.5, "unknown": 0.8}
@@ -42,7 +42,11 @@ class RiskAgent(BaseAgent):
         self._win_rates[key] = float(np.clip(win_rate, 0.01, 0.99))
 
     def get_win_rate(self, symbol: str, interval: str, pattern: str = "") -> float:
-        """Look up win rate with fallback hierarchy."""
+        """Look up win rate with fallback hierarchy.
+
+        Only trust a real win rate once sufficient trades have been observed.
+        Falls back to the conservative break-even default (0.50) when no data exists.
+        """
         keys = [
             f"{symbol}_{interval}_{pattern}",
             f"{symbol}_{interval}",
@@ -160,7 +164,12 @@ class RiskAgent(BaseAgent):
                             win_rate: float = DEFAULT_WIN_RATE,
                             rr: float = 2.0,
                             regime: str = "unknown") -> float:
-        """Return position size in base currency units."""
+        """Return position size in base currency units.
+
+        Capped so that notional exposure (size × entry) never exceeds
+        50 % of the current balance after applying leverage, preventing
+        over-margining even at maximum Kelly fraction.
+        """
         risk_per_unit = abs(entry - sl)
         if risk_per_unit < 1e-10:
             return 0.0
@@ -170,6 +179,9 @@ class RiskAgent(BaseAgent):
         # Apply regime multiplier
         regime_mult = _REGIME_SIZE_MULT.get(regime, 0.8)
         size = size * regime_mult
+        # Leverage cap: (size × entry) / LEVERAGE ≤ 50 % of balance
+        max_size_by_margin = (self._balance * 0.5 * LEVERAGE) / max(entry, 1e-10)
+        size = min(size, max_size_by_margin)
         return round(float(size), 4)
 
     # ------------------------------------------------------------------

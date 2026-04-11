@@ -17,19 +17,7 @@ from agents.meta_agent import MetaAgent
 from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, _SNIPER_MIN_AGREEING_TIMEFRAMES
 from engine.execution import ExecutionEngine
 from data import data_store
-from config.settings import (
-    ORARI_VIETATI_UTC,
-    ORARI_MIGLIORI_UTC,
-    SIGNAL_COOLDOWN_BY_TF,
-    SIGNAL_COOLDOWN,
-    MAX_OPEN_POSITIONS,
-    MIN_FUSION_SCORE,
-    MIN_AGENT_CONFIRMATIONS,
-    MIN_RR,
-    NON_OPTIMAL_HOUR_PENALTY,
-    HIGH_MARGIN_ONLY,
-    HIGH_MARGIN_MIN_RR,
-)
+import config.settings as _cfg
 
 logger = logging.getLogger("EventProcessor")
 
@@ -117,14 +105,14 @@ class EventProcessor:
     # ------------------------------------------------------------------
 
     def _is_forbidden_hour(self) -> bool:
-        return datetime.datetime.now(datetime.timezone.utc).hour in ORARI_VIETATI_UTC
+        return datetime.datetime.now(datetime.timezone.utc).hour in _cfg.ORARI_VIETATI_UTC
 
     def _is_optimal_hour(self) -> bool:
-        return datetime.datetime.now(datetime.timezone.utc).hour in ORARI_MIGLIORI_UTC
+        return datetime.datetime.now(datetime.timezone.utc).hour in _cfg.ORARI_MIGLIORI_UTC
 
     def _is_signal_cooled(self, symbol: str, interval: str) -> bool:
         key = f"{symbol}_{interval}"
-        cooldown = SIGNAL_COOLDOWN_BY_TF.get(interval, SIGNAL_COOLDOWN)
+        cooldown = _cfg.SIGNAL_COOLDOWN_BY_TF.get(interval, _cfg.SIGNAL_COOLDOWN)
         return (time.time() - self._last_signal_time.get(key, 0)) >= cooldown
 
     def _mark_signal(self, symbol: str, interval: str) -> None:
@@ -255,7 +243,7 @@ class EventProcessor:
         # Guard: max open positions
         open_pos = self.execution.get_open_positions()
         open_for_symbol = [p for p in open_pos if p.symbol == symbol]
-        if len(open_pos) >= MAX_OPEN_POSITIONS:
+        if len(open_pos) >= _cfg.MAX_OPEN_POSITIONS:
             self._skip("max_open_positions")
             logger.info(f"⛔ {symbol}/{interval} SKIP: max_open_positions | open={len(open_pos)}")
             return None
@@ -278,10 +266,12 @@ class EventProcessor:
                 exec_stats = self.execution.get_stats()
                 balance = exec_stats.get("balance", exec_stats.get("initial_balance", 1000.0))
                 initial_bal = exec_stats.get("initial_balance", balance)
+                # Use tracked peak balance for correct drawdown calculation (L3)
+                peak_bal = exec_stats.get("peak_balance", balance)
                 portfolio_state = {
                     "balance": balance,
                     "initial_balance": initial_bal,
-                    "peak_balance": balance,  # simplified: use current balance as peak
+                    "peak_balance": peak_bal,
                     "daily_pnl": exec_stats.get("daily_pnl", 0),
                     "positions": [{"symbol": p.symbol, "pnl_pct": 0} for p in open_pos],
                     "market_vol": 0,      # not tracked at this layer; L5 trip unlikely
@@ -335,11 +325,15 @@ class EventProcessor:
             slope_series = _ema_slope_fn(df["close"], 20, 3)
             if not slope_series.empty:
                 current_slope = float(slope_series.iloc[-1])
-                # Se slope è quasi zero (mercato piatto), skip
-                if abs(current_slope) < _MIN_EMA_SLOPE_THRESHOLD:
+                close_price = float(df["close"].iloc[-1])
+                # Normalise slope by price so the threshold is scale-independent.
+                # A slope of 0.001% per bar is the minimum meaningful trend.
+                normalised_slope = abs(current_slope) / max(close_price, 1e-10)
+                if normalised_slope < _MIN_EMA_SLOPE_THRESHOLD:
                     self._skip("flat_ema_slope")
                     logger.debug(
-                        f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={current_slope:.5f}"
+                        f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={normalised_slope:.6f} "
+                        f"(abs={current_slope:.5f} price={close_price:.4f})"
                     )
                     return None
         except Exception as _slope_err:
@@ -457,11 +451,11 @@ class EventProcessor:
             self._skip("no_agent_results")
             logger.info(f"⛔ {symbol}/{interval} SKIP: no_agent_results")
             return None
-        if len(agent_results) < MIN_AGENT_CONFIRMATIONS:
+        if len(agent_results) < _cfg.MIN_AGENT_CONFIRMATIONS:
             self._skip("insufficient_confirmations")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: insufficient_confirmations | "
-                f"agents={len(agent_results)}/{MIN_AGENT_CONFIRMATIONS} "
+                f"agents={len(agent_results)}/{_cfg.MIN_AGENT_CONFIRMATIONS} "
                 f"present={list(agent_results.keys())}"
             )
             return None
@@ -476,12 +470,12 @@ class EventProcessor:
                 f"agents={len(agent_results)} fusion={fusion_result.final_score:.3f}"
             )
             return None
-        if fusion_result.final_score < MIN_FUSION_SCORE:
+        if fusion_result.final_score < _cfg.MIN_FUSION_SCORE:
             self._skip("low_fusion_score")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_fusion_score | "
                 f"agents={len(agent_results)} fusion={fusion_result.final_score:.3f} "
-                f"threshold={MIN_FUSION_SCORE:.3f}"
+                f"threshold={_cfg.MIN_FUSION_SCORE:.3f}"
             )
             return None
 
@@ -514,30 +508,30 @@ class EventProcessor:
         except Exception:
             rr = 0.0
 
-        if rr < MIN_RR:
+        if rr < _cfg.MIN_RR:
             self._skip("low_rr")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_rr | "
-                f"rr={rr:.2f} min={MIN_RR:.2f} entry={entry:.4f} sl={sl:.4f} tp1={tp1:.4f}"
+                f"rr={rr:.2f} min={_cfg.MIN_RR:.2f} entry={entry:.4f} sl={sl:.4f} tp1={tp1:.4f}"
             )
             return None
 
         # High margin filter: skip signals with insufficient R/R when filter is active
-        if HIGH_MARGIN_ONLY and rr < HIGH_MARGIN_MIN_RR:
+        if _cfg.HIGH_MARGIN_ONLY and rr < _cfg.HIGH_MARGIN_MIN_RR:
             self._skip("low_margin")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_margin | "
-                f"rr={rr:.2f} min_high_margin={HIGH_MARGIN_MIN_RR:.2f}"
+                f"rr={rr:.2f} min_high_margin={_cfg.HIGH_MARGIN_MIN_RR:.2f}"
             )
             return None
 
         # Apply penalty for non-optimal trading hours: require a higher fusion score
-        if not self._is_optimal_hour() and fusion_result.final_score < MIN_FUSION_SCORE + NON_OPTIMAL_HOUR_PENALTY:
+        if not self._is_optimal_hour() and fusion_result.final_score < _cfg.MIN_FUSION_SCORE + _cfg.NON_OPTIMAL_HOUR_PENALTY:
             self._skip("low_fusion_score")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_fusion_score (non-optimal hour) | "
                 f"agents={len(agent_results)} fusion={fusion_result.final_score:.3f} "
-                f"threshold={MIN_FUSION_SCORE + NON_OPTIMAL_HOUR_PENALTY:.3f}"
+                f"threshold={_cfg.MIN_FUSION_SCORE + _cfg.NON_OPTIMAL_HOUR_PENALTY:.3f}"
             )
             return None
 

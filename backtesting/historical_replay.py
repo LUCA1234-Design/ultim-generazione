@@ -66,44 +66,66 @@ def run_backtest(
     position = None  # {'side': 'long'/'short', 'entry': price, 'size': fraction}
 
     close_prices = data["close"].values.astype(float)
+    # Use intracandle high/low for SL/TP evaluation to avoid look-ahead bias.
+    # A stop-loss at, say, 2 % below entry may be hit by the candle's low even
+    # if the candle closes above the SL level.  Using only the close price
+    # systematically underestimates stop-outs.
+    high_prices = data["high"].values.astype(float) if "high" in data.columns else close_prices
+    low_prices = data["low"].values.astype(float) if "low" in data.columns else close_prices
     n = len(close_prices)
 
     for i in range(20, n):
         price = close_prices[i]
+        bar_high = high_prices[i]
+        bar_low = low_prices[i]
 
         # Check stop/take profit for open position
         if position is not None:
             entry = position["entry"]
             side = position["side"]
             size = position["size"]
+            sl_price = position["sl_price"]
+            tp_price = position["tp_price"]
 
             if side == "long":
-                pnl_pct = (price - entry) / entry
-                should_close = pnl_pct <= -sl_pct or pnl_pct >= tp_pct
-            else:
-                pnl_pct = (entry - price) / entry
-                should_close = pnl_pct <= -sl_pct or pnl_pct >= tp_pct
-
-            if should_close:
-                # Close with slippage
-                exit_price = price * (1 + slippage if side == "long" else 1 - slippage)
-                if side == "long":
+                # SL hit if the candle low touched the stop-loss level
+                if bar_low <= sl_price:
+                    exit_price = sl_price * (1 + slippage)
                     realised_pnl_pct = (exit_price - entry) / entry
-                else:
+                    pnl = balance * size * realised_pnl_pct - balance * size * commission
+                    balance += pnl
+                    peak_balance = max(peak_balance, balance)
+                    trades.append({"pnl": pnl, "pnl_pct": realised_pnl_pct, "win": pnl > 0,
+                                   "entry_i": position.get("entry_i", i), "exit_i": i})
+                    position = None
+                elif bar_high >= tp_price:
+                    exit_price = tp_price * (1 - slippage)
+                    realised_pnl_pct = (exit_price - entry) / entry
+                    pnl = balance * size * realised_pnl_pct - balance * size * commission
+                    balance += pnl
+                    peak_balance = max(peak_balance, balance)
+                    trades.append({"pnl": pnl, "pnl_pct": realised_pnl_pct, "win": pnl > 0,
+                                   "entry_i": position.get("entry_i", i), "exit_i": i})
+                    position = None
+            else:  # short
+                if bar_high >= sl_price:
+                    exit_price = sl_price * (1 - slippage)
                     realised_pnl_pct = (entry - exit_price) / entry
-
-                pnl = balance * size * realised_pnl_pct
-                balance += pnl - balance * size * commission
-                peak_balance = max(peak_balance, balance)
-
-                trades.append({
-                    "pnl": pnl,
-                    "pnl_pct": realised_pnl_pct,
-                    "win": pnl > 0,
-                    "entry_i": position.get("entry_i", i),
-                    "exit_i": i,
-                })
-                position = None
+                    pnl = balance * size * realised_pnl_pct - balance * size * commission
+                    balance += pnl
+                    peak_balance = max(peak_balance, balance)
+                    trades.append({"pnl": pnl, "pnl_pct": realised_pnl_pct, "win": pnl > 0,
+                                   "entry_i": position.get("entry_i", i), "exit_i": i})
+                    position = None
+                elif bar_low <= tp_price:
+                    exit_price = tp_price * (1 + slippage)
+                    realised_pnl_pct = (entry - exit_price) / entry
+                    pnl = balance * size * realised_pnl_pct - balance * size * commission
+                    balance += pnl
+                    peak_balance = max(peak_balance, balance)
+                    trades.append({"pnl": pnl, "pnl_pct": realised_pnl_pct, "win": pnl > 0,
+                                   "entry_i": position.get("entry_i", i), "exit_i": i})
+                    position = None
 
         equity_curve.append(balance)
 
@@ -118,10 +140,14 @@ def run_backtest(
                 # Enter with slippage and commission
                 entry_price = price * (1 + slippage if direction == "long" else 1 - slippage)
                 balance -= balance * size * commission
+                sl_price = entry_price * (1 - sl_pct) if direction == "long" else entry_price * (1 + sl_pct)
+                tp_price = entry_price * (1 + tp_pct) if direction == "long" else entry_price * (1 - tp_pct)
                 position = {
                     "side": direction,
                     "entry": entry_price,
                     "size": size,
+                    "sl_price": sl_price,
+                    "tp_price": tp_price,
                     "entry_i": i,
                 }
 
