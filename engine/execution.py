@@ -236,7 +236,22 @@ class ExecutionEngine:
 
         if not self.paper_trading:
             side = "SELL" if pos.direction == "long" else "BUY"
-            place_futures_order(pos.symbol, side, "MARKET", pos.size, reduce_only=True)
+            close_order = place_futures_order(pos.symbol, side, "MARKET", pos.size, reduce_only=True)
+            # Update close_price and PnL with actual fill price when available
+            if close_order is not None:
+                try:
+                    fill_price = float(close_order.get("avgPrice") or close_order.get("price") or 0)
+                    if fill_price > 0 and fill_price != close_price:
+                        actual_pnl = pos.unrealised_pnl(fill_price)
+                        pnl_diff = actual_pnl - (pos.pnl or 0.0)
+                        pos.close_price = fill_price
+                        pos.pnl = actual_pnl
+                        with self._lock:
+                            self._balance += pnl_diff
+                            self._total_pnl += pnl_diff
+                            self._daily_pnl += pnl_diff
+                except Exception:
+                    pass
 
         return pos
 
