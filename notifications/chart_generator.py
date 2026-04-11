@@ -25,6 +25,8 @@ def generate_signal_chart(
     tp1: float,
     tp2: float,
     n_candles: int = 60,
+    rr: float = 0.0,
+    kelly_pct: float = 0.0,
 ) -> Optional[bytes]:
     """Generate a candlestick chart with entry, SL, TP1, TP2 horizontal lines.
 
@@ -38,6 +40,8 @@ def generate_signal_chart(
         tp1: take profit 1 price
         tp2: take profit 2 price
         n_candles: number of candles to show (last N)
+        rr: Risk/Reward ratio (optional, for annotations)
+        kelly_pct: Kelly criterion position size % (optional, for info box)
 
     Returns:
         PNG image as bytes, or None on error.
@@ -88,6 +92,17 @@ def generate_signal_chart(
         tp1_color = "#4CAF50"    # green
         tp2_color = "#00E676"    # bright green
 
+        # Calculate % gain for TP1 and TP2
+        if direction == "long":
+            pct_tp1 = ((tp1 - entry) / entry) * 100 if entry > 0 else 0.0
+            pct_tp2 = ((tp2 - entry) / entry) * 100 if entry > 0 else 0.0
+        else:
+            pct_tp1 = ((entry - tp1) / entry) * 100 if entry > 0 else 0.0
+            pct_tp2 = ((entry - tp2) / entry) * 100 if entry > 0 else 0.0
+
+        from config.settings import HIGH_MARGIN_MIN_RR, HIGH_MARGIN_BADGE
+        is_high_margin = rr >= HIGH_MARGIN_MIN_RR
+
         # Horizontal lines for entry, SL, TP1, TP2
         hlines = dict(
             hlines=[entry, sl, tp1, tp2],
@@ -110,8 +125,10 @@ def generate_signal_chart(
             rc={"font.size": 9},
         )
 
-        # Title
+        # Title — add HIGH MARGIN badge and gold color when applicable
         title = f"{symbol} [{interval}] — {dir_emoji}"
+        if is_high_margin:
+            title = f"{HIGH_MARGIN_BADGE} | {title}"
 
         # Render to buffer
         buf = io.BytesIO()
@@ -128,6 +145,26 @@ def generate_signal_chart(
 
         # Add legend text for the levels
         ax = axes[0]
+
+        # Coloured profit/risk zones using axhspan
+        try:
+            if direction == "long":
+                # Profit zone between entry and TP1
+                ax.axhspan(entry, tp1, alpha=0.15, color="#4CAF50", zorder=0)
+                # Extended profit zone between TP1 and TP2
+                ax.axhspan(tp1, tp2, alpha=0.10, color="#00E676", zorder=0)
+                # Risk zone between SL and entry
+                ax.axhspan(sl, entry, alpha=0.12, color="#F44336", zorder=0)
+            else:
+                # Profit zone between TP1 and entry
+                ax.axhspan(tp1, entry, alpha=0.15, color="#4CAF50", zorder=0)
+                # Extended profit zone between TP2 and TP1
+                ax.axhspan(tp2, tp1, alpha=0.10, color="#00E676", zorder=0)
+                # Risk zone between entry and SL
+                ax.axhspan(entry, sl, alpha=0.12, color="#F44336", zorder=0)
+        except Exception as _zone_err:
+            logger.debug(f"axhspan zone error: {_zone_err}")
+
         ax.text(
             0.02, 0.98, f"Entry: {entry:.4f}",
             transform=ax.transAxes, fontsize=9,
@@ -139,15 +176,56 @@ def generate_signal_chart(
             color=sl_color, va="top", fontweight="bold",
         )
         ax.text(
-            0.02, 0.90, f"TP1: {tp1:.4f}",
+            0.02, 0.90, f"TP1: {tp1:.4f} (+{pct_tp1:.2f}%)",
             transform=ax.transAxes, fontsize=9,
             color=tp1_color, va="top", fontweight="bold",
         )
         ax.text(
-            0.02, 0.86, f"TP2: {tp2:.4f}",
+            0.02, 0.86, f"TP2: {tp2:.4f} (+{pct_tp2:.2f}%)",
             transform=ax.transAxes, fontsize=9,
             color=tp2_color, va="top", fontweight="bold",
         )
+
+        # Info box in top-right corner: R/R, % TP1, % TP2, Kelly
+        info_lines = []
+        if rr > 0:
+            info_lines.append(f"R/R: {rr:.2f}x")
+        info_lines.append(f"TP1: +{pct_tp1:.2f}%")
+        info_lines.append(f"TP2: +{pct_tp2:.2f}%")
+        if kelly_pct > 0:
+            info_lines.append(f"Kelly: {kelly_pct:.1f}%")
+        if info_lines:
+            info_text = "\n".join(info_lines)
+            box_color = "#FFD700" if is_high_margin else "#FFFFFF"
+            ax.text(
+                0.98, 0.98, info_text,
+                transform=ax.transAxes, fontsize=9,
+                color="#000000", va="top", ha="right", fontweight="bold",
+                bbox=dict(
+                    boxstyle="round,pad=0.4",
+                    facecolor=box_color,
+                    alpha=0.85,
+                    edgecolor="#AAAAAA",
+                ),
+            )
+
+        # R/R annotation on chart
+        if rr > 0:
+            rr_color = "#FFD700" if is_high_margin else "#FFFFFF"
+            ax.text(
+                0.50, 0.02, f"R/R: {rr:.2f}x",
+                transform=ax.transAxes, fontsize=10,
+                color=rr_color, va="bottom", ha="center", fontweight="bold",
+            )
+
+        # Title color: gold for high margin signals
+        if is_high_margin:
+            try:
+                for t in fig.texts:
+                    t.set_color("#FFD700")
+                    t.set_fontweight("bold")
+            except Exception as _title_err:
+                logger.debug(f"Title color error: {_title_err}")
 
         fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
