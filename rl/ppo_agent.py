@@ -239,12 +239,17 @@ class PPOAgent:
                     # Actor backward
                     d_logits = probs.copy()
                     d_logits[a] -= 1.0
-                    # Scale gradient by PPO objective
-                    clip_ratio = ratio < (1 - self.clip_epsilon) or ratio > (1 + self.clip_epsilon)
-                    if not clip_ratio:
-                        scale = -adv * ratio
-                    else:
+                    # Scale gradient by PPO clipped objective.
+                    # The gradient is suppressed (scale=0) when the ratio IS outside
+                    # the clip bounds — not when it is inside (the original code was
+                    # inverted, zeroing the gradient for in-range samples).
+                    ratio_clipped = ratio < (1 - self.clip_epsilon) or ratio > (1 + self.clip_epsilon)
+                    if ratio_clipped:
+                        # Outside clip bounds: gradient is blocked
                         scale = 0.0
+                    else:
+                        # Inside clip bounds: normal PPO gradient
+                        scale = -adv * ratio
                     d_logits = d_logits.reshape(1, -1) * scale
                     self._actor.backward(d_logits, actor_cache)
 

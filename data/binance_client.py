@@ -11,6 +11,10 @@ logger = logging.getLogger("BinanceClient")
 
 _client_instance = None
 
+# Rate-limit back-off: minimum sleep after a 429/418 response
+_RATE_LIMIT_BACKOFF = 60.0   # seconds to wait after a 429 (rate-limited)
+_IP_BAN_BACKOFF = 300.0      # seconds to wait after a 418 (temporary IP ban)
+
 
 def get_client() -> Client:
     """Return the singleton Binance Futures client, initialising it on first call."""
@@ -27,17 +31,45 @@ def _create_client() -> Client:
     return c
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Return True if the exception signals HTTP 429 (rate-limited)."""
+    msg = str(exc)
+    return "429" in msg or "Too Many Requests" in msg.lower()
+
+
+def _is_ip_ban_error(exc: Exception) -> bool:
+    """Return True if the exception signals HTTP 418 (temporary IP ban)."""
+    return "418" in str(exc)
+
+
 def fetch_futures_klines(symbol: str, interval: str, limit: int = 500):
     """Fetch klines from Binance Futures REST API.
+
+    Handles HTTP 429 (rate-limited) and 418 (IP ban) responses with
+    appropriate back-off to avoid making the situation worse.
 
     Returns a list of raw kline lists as returned by python-binance.
     """
     c = get_client()
-    max_retries = 3
+    max_retries = 4
     for attempt in range(max_retries):
         try:
             return c.futures_klines(symbol=symbol, interval=interval, limit=limit)
         except Exception as e:
+            if _is_ip_ban_error(e):
+                logger.error(
+                    f"fetch_futures_klines: IP temporarily banned (418). "
+                    f"Sleeping {_IP_BAN_BACKOFF}s before retry."
+                )
+                time.sleep(_IP_BAN_BACKOFF)
+                continue
+            if _is_rate_limit_error(e):
+                logger.warning(
+                    f"fetch_futures_klines: rate limited (429). "
+                    f"Sleeping {_RATE_LIMIT_BACKOFF}s before retry."
+                )
+                time.sleep(_RATE_LIMIT_BACKOFF)
+                continue
             logger.warning(f"fetch_futures_klines {symbol} {interval} attempt {attempt+1}: {e}")
             if attempt < max_retries - 1:
                 time.sleep(2 ** attempt)
@@ -91,5 +123,10 @@ def place_futures_order(symbol: str, side: str, order_type: str = "MARKET",
         logger.info(f"✅ Order placed: {symbol} {side} {order_type} qty={quantity}")
         return result
     except Exception as e:
-        logger.error(f"place_futures_order {symbol} {side}: {e}")
+        if _is_rate_limit_error(e) or _is_ip_ban_error(e):
+            logger.error(
+                f"place_futures_order rate-limited/banned for {symbol} {side}: {e}"
+            )
+        else:
+            logger.error(f"place_futures_order {symbol} {side}: {e}")
         return None

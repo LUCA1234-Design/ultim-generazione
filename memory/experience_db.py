@@ -30,8 +30,13 @@ def init_db(path: str = DB_PATH) -> None:
     global _conn
     _conn = sqlite3.connect(path, check_same_thread=False)
     _conn.row_factory = sqlite3.Row
+    # Enable WAL mode: allows concurrent reads while a write is in progress,
+    # reducing lock contention under the multi-threaded workload.
+    _conn.execute("PRAGMA journal_mode=WAL")
+    _conn.execute("PRAGMA synchronous=NORMAL")   # safe with WAL, better performance
+    _conn.commit()
     _create_tables()
-    logger.info(f"✅ Experience DB initialised at {path}")
+    logger.info(f"✅ Experience DB initialised at {path} (WAL mode)")
 
 
 def _create_tables() -> None:

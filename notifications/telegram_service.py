@@ -16,6 +16,7 @@ from engine.execution import Position
 logger = logging.getLogger("TelegramService")
 
 _last_message_time: Dict[str, float] = {}
+_send_lock = __import__("threading").Lock()  # prevents concurrent sends racing the rate limiter
 
 
 # ---------------------------------------------------------------------------
@@ -24,23 +25,24 @@ _last_message_time: Dict[str, float] = {}
 
 def send_message(text: str, parse_mode: str = "Markdown",
                  chat_id: str = TELEGRAM_CHAT_ID) -> Optional[dict]:
-    """Send a text message with rate limiting."""
-    now = time.time()
-    last = _last_message_time.get(chat_id, 0)
-    if now - last < TELEGRAM_RATE_LIMIT:
-        time.sleep(TELEGRAM_RATE_LIMIT - (now - last))
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-        resp = requests.post(url, json=payload, timeout=10)
-        _last_message_time[chat_id] = time.time()
-        result = resp.json()
-        if not result.get("ok"):
-            logger.warning(f"Telegram send failed: {result.get('description')}")
-        return result
-    except Exception as e:
-        logger.error(f"Telegram send error: {e}")
-        return None
+    """Send a text message with rate limiting (thread-safe)."""
+    with _send_lock:
+        now = time.time()
+        last = _last_message_time.get(chat_id, 0)
+        if now - last < TELEGRAM_RATE_LIMIT:
+            time.sleep(TELEGRAM_RATE_LIMIT - (now - last))
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+            resp = requests.post(url, json=payload, timeout=10)
+            _last_message_time[chat_id] = time.time()
+            result = resp.json()
+            if not result.get("ok"):
+                logger.warning(f"Telegram send failed: {result.get('description')}")
+            return result
+        except Exception as e:
+            logger.error(f"Telegram send error: {e}")
+            return None
 
 
 def send_photo(image_bytes: bytes, caption: str = "",
