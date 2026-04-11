@@ -164,7 +164,7 @@ def clear_symbol(symbol: str) -> None:
     with _get_symbol_lock(symbol):
         _historical.pop(symbol, None)
         _realtime.pop(symbol, None)
-    # Rimuove anche la cache degli indicatori per questo symbol
+    # Remove indicator cache for this symbol
     with _cache_lock:
         keys_to_remove = [k for k in _indicator_cache if k.startswith(f"{symbol}_")]
         for k in keys_to_remove:

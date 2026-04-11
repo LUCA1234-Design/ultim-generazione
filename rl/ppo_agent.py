@@ -241,8 +241,8 @@ class PPOAgent:
                     d_logits[a] -= 1.0
                     # Scale gradient by PPO clipped objective.
                     # The gradient is suppressed (scale=0) when the ratio IS outside
-                    # the clip bounds — not when it is inside (the original code was
-                    # inverted, zeroing the gradient for in-range samples).
+                    # the clip bounds — not when it is inside (the previous implementation
+                    # was inverted, zeroing the gradient for in-range samples).
                     ratio_clipped = ratio < (1 - self.clip_epsilon) or ratio > (1 + self.clip_epsilon)
                     if ratio_clipped:
                         # Outside clip bounds: gradient is blocked
