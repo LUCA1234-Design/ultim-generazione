@@ -1,5 +1,5 @@
 """
-Pattern Agent for V17.
+Pattern Agent for V17/V18.
 Preserves ALL V16 detectors with auto-calibrating thresholds:
 - Squeeze (immediate & validated)
 - NR7 (Narrowest Range 7)
@@ -7,6 +7,13 @@ Preserves ALL V16 detectors with auto-calibrating thresholds:
 - Hammer / Shooting Star
 - RSI Divergence (bullish & bearish)
 - Breakout detector
+V18 additions:
+- Supertrend direction filter
+- Break of Structure (BOS)
+- Change of Character (CHoCH)
+- Fair Value Gap (FVG)
+- CVD Divergence
+- EMA 200 trend alignment
 """
 import logging
 import numpy as np
@@ -352,6 +359,58 @@ class PatternAgent(BaseAgent):
             score += 0.10
             details.append(f"ADX({last_adx:.1f})")
 
+        # === V18 NEW SIGNALS: pre-compute for scoring and direction votes ===
+        _bos_val = 0        # most recent BOS direction (+1 / -1 / 0)
+        _choch_val = 0      # most recent CHoCH direction
+        _fvg_val = 0        # most recent FVG direction
+        _cvd_div_val = 0    # CVD divergence
+        _st_dir = 0         # Supertrend direction
+        _ema200_dir = 0     # EMA 200 position (+1 above, -1 below)
+
+        try:
+            from indicators.smart_money import (
+                detect_bos, detect_choch, detect_fvg, detect_cvd_divergence,
+            )
+            _bos_s = detect_bos(df, lookback=20)
+            _recent_bos = _bos_s.iloc[-5:]
+            if (_recent_bos == 1).any():
+                _bos_val = 1
+            elif (_recent_bos == -1).any():
+                _bos_val = -1
+
+            _choch_s = detect_choch(df, lookback=30)
+            _recent_choch = _choch_s.iloc[-3:]
+            if (_recent_choch == 1).any():
+                _choch_val = 1
+            elif (_recent_choch == -1).any():
+                _choch_val = -1
+
+            _fvg_s = detect_fvg(df)
+            _recent_fvg = _fvg_s.iloc[-5:]
+            if (_recent_fvg == 1).any():
+                _fvg_val = 1
+            elif (_recent_fvg == -1).any():
+                _fvg_val = -1
+
+            _cvd_div_val = int(detect_cvd_divergence(df, lookback=20).iloc[-1])
+        except Exception:
+            pass
+
+        try:
+            from indicators.technical import supertrend as _supertrend_fn
+            _, _st_dir_s = _supertrend_fn(df, period=10, multiplier=3.0)
+            _st_dir = int(_st_dir_s.iloc[-1])
+        except Exception:
+            pass
+
+        try:
+            from indicators.technical import ema as _ema_fn
+            if len(df) >= 200:
+                _ema200 = float(_ema_fn(df["close"], 200).iloc[-1])
+                _ema200_dir = 1 if float(df["close"].iloc[-1]) > _ema200 else -1
+        except Exception:
+            pass
+
         # === VOTO PESATO DIREZIONE CECCHINO ===
         long_votes = 0.0
         short_votes = 0.0
@@ -419,6 +478,42 @@ class PatternAgent(BaseAgent):
         except Exception:
             pass
 
+        # Supertrend (peso 1.0)
+        if _st_dir == 1:
+            long_votes += 1.0
+        elif _st_dir == -1:
+            short_votes += 1.0
+
+        # BOS — Break of Structure (peso 1.5)
+        if _bos_val == 1:
+            long_votes += 1.5
+        elif _bos_val == -1:
+            short_votes += 1.5
+
+        # CHoCH — Change of Character (peso 2.0)
+        if _choch_val == 1:
+            long_votes += 2.0
+        elif _choch_val == -1:
+            short_votes += 2.0
+
+        # FVG — Fair Value Gap (peso 0.8)
+        if _fvg_val == 1:
+            long_votes += 0.8
+        elif _fvg_val == -1:
+            short_votes += 0.8
+
+        # CVD Divergence (peso 1.5)
+        if _cvd_div_val == 1:
+            long_votes += 1.5
+        elif _cvd_div_val == -1:
+            short_votes += 1.5
+
+        # EMA 200 (peso 2.0 — strongest trend context filter)
+        if _ema200_dir == 1:
+            long_votes += 2.0
+        elif _ema200_dir == -1:
+            short_votes += 2.0
+
         # Decisione finale
         if long_votes == short_votes:
             direction = "long" if rsi_val <= 50 else "short"
@@ -447,6 +542,56 @@ class PatternAgent(BaseAgent):
         elif direction == "short" and market_structure == "uptrend":
             score *= _STRUCTURE_OPPOSED_PENALTY
             details.append(f"structure_OPPOSED_short(x{_STRUCTURE_OPPOSED_PENALTY})")
+
+        # === V18 SCORE BONUSES — direction-aligned only ===
+        if _st_dir == 1 and direction == "long":
+            score += 0.08
+            details.append("supertrend_long(+0.08)")
+        elif _st_dir == -1 and direction == "short":
+            score += 0.08
+            details.append("supertrend_short(+0.08)")
+
+        if _bos_val == 1 and direction == "long":
+            score += 0.12
+            details.append("BOS_long(+0.12)")
+        elif _bos_val == -1 and direction == "short":
+            score += 0.12
+            details.append("BOS_short(+0.12)")
+
+        if _choch_val == 1 and direction == "long":
+            score += 0.18
+            details.append("CHoCH_long(+0.18)")
+        elif _choch_val == -1 and direction == "short":
+            score += 0.18
+            details.append("CHoCH_short(+0.18)")
+
+        if _fvg_val == 1 and direction == "long":
+            score += 0.08
+            details.append("FVG_long(+0.08)")
+        elif _fvg_val == -1 and direction == "short":
+            score += 0.08
+            details.append("FVG_short(+0.08)")
+
+        if _cvd_div_val == 1 and direction == "long":
+            score += 0.15
+            details.append("CVD_div_long(+0.15)")
+        elif _cvd_div_val == -1 and direction == "short":
+            score += 0.15
+            details.append("CVD_div_short(+0.15)")
+
+        # EMA 200 alignment bonus / penalty
+        if _ema200_dir == 1 and direction == "long":
+            score += 0.10
+            details.append("EMA200_aligned_long(+0.10)")
+        elif _ema200_dir == -1 and direction == "short":
+            score += 0.10
+            details.append("EMA200_aligned_short(+0.10)")
+        elif _ema200_dir == 1 and direction == "short":
+            score *= 0.92
+            details.append("EMA200_OPPOSED_short(x0.92)")
+        elif _ema200_dir == -1 and direction == "long":
+            score *= 0.92
+            details.append("EMA200_OPPOSED_long(x0.92)")
 
         return float(np.clip(score, 0.0, 1.0)), direction, details
 
