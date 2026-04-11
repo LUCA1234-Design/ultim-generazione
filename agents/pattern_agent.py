@@ -593,7 +593,12 @@ class PatternAgent(BaseAgent):
             score *= 0.92
             details.append("EMA200_OPPOSED_long(x0.92)")
 
-        return float(np.clip(score, 0.0, 1.0)), direction, details
+        # Sigmoid normalization: preserva la differenza tra segnali forti e fortissimi
+        raw_score = score
+        score = 1.0 / (1.0 + np.exp(-4.0 * (raw_score - 0.5)))
+        details.append(f"raw_score={raw_score:.3f}")
+
+        return float(score), direction, details
 
     # ----------------------------------------------------------------
     # BaseAgent interface

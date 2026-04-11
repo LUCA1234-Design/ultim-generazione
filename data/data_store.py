@@ -1,18 +1,23 @@
 """
 DataFrame store for V17.
 Thread-safe in-memory store for historical and realtime OHLCV data.
+Includes indicator caching per symbol/interval for performance optimization.
 """
 import logging
 import pandas as pd
 import numpy as np
 from threading import Lock
-from typing import Optional, Dict
+from typing import Optional, Dict, Any
 
 logger = logging.getLogger("DataStore")
 
 _lock = Lock()
 _historical: Dict[str, Dict[str, pd.DataFrame]] = {}   # {symbol: {interval: df}}
 _realtime: Dict[str, Dict[str, pd.DataFrame]] = {}     # {symbol: {interval: df}}
+
+# Cache indicatori: {"{symbol}_{interval}": {indicator_name: value}}
+_indicator_cache: Dict[str, Dict[str, Any]] = {}
+_cache_lock = Lock()
 
 HISTORICAL_LIMIT = 500
 
@@ -53,6 +58,8 @@ def store_historical(symbol: str, interval: str, klines: list) -> None:
             _realtime[symbol] = {}
         _historical[symbol][interval] = df
         _realtime[symbol][interval] = df.copy()
+    # Invalida la cache indicatori per questo symbol/interval
+    invalidate_cache(symbol, interval)
 
 
 def update_realtime(symbol: str, interval: str, kline: dict) -> None:
@@ -87,6 +94,8 @@ def update_realtime(symbol: str, interval: str, kline: dict) -> None:
             if len(df) > HISTORICAL_LIMIT:
                 df = df.iloc[-HISTORICAL_LIMIT:]
             _realtime[symbol][interval] = df
+        # Invalida la cache indicatori quando arrivano nuovi dati
+        invalidate_cache(symbol, interval)
     except Exception as e:
         logger.debug(f"update_realtime {symbol} {interval}: {e}")
 
@@ -144,3 +153,35 @@ def clear_symbol(symbol: str) -> None:
     with _lock:
         _historical.pop(symbol, None)
         _realtime.pop(symbol, None)
+    # Rimuove anche la cache degli indicatori per questo symbol
+    with _cache_lock:
+        keys_to_remove = [k for k in _indicator_cache if k.startswith(f"{symbol}_")]
+        for k in keys_to_remove:
+            del _indicator_cache[k]
+
+
+# ---------------------------------------------------------------------------
+# Indicator caching — evita ricalcoli ripetuti per la stessa candela
+# ---------------------------------------------------------------------------
+
+def get_cached_indicator(symbol: str, interval: str, indicator_name: str) -> Optional[Any]:
+    """Restituisce il valore dell'indicatore dalla cache, o None se non presente."""
+    key = f"{symbol}_{interval}"
+    with _cache_lock:
+        return _indicator_cache.get(key, {}).get(indicator_name)
+
+
+def set_cached_indicator(symbol: str, interval: str, indicator_name: str, value: Any) -> None:
+    """Salva il valore dell'indicatore nella cache per symbol/interval."""
+    key = f"{symbol}_{interval}"
+    with _cache_lock:
+        if key not in _indicator_cache:
+            _indicator_cache[key] = {}
+        _indicator_cache[key][indicator_name] = value
+
+
+def invalidate_cache(symbol: str, interval: str) -> None:
+    """Invalida la cache degli indicatori per symbol/interval (chiamare su nuovi dati)."""
+    key = f"{symbol}_{interval}"
+    with _cache_lock:
+        _indicator_cache.pop(key, None)

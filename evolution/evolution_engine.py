@@ -238,6 +238,10 @@ class EvolutionEngine:
         # PPO experience buffer for RL training
         self._ppo_experience_buffer: list = []
 
+        # Checkpoint & rollback mechanism: salva lo stato dei parametri prima di ogni tick
+        self._last_checkpoint: Optional[dict] = None
+        self._checkpoint_win_rate: float = 0.5
+
         v18_modules = sum([
             self._hmm is not None,
             self._ppo is not None,
@@ -470,6 +474,12 @@ class EvolutionEngine:
         with self._lock:
             now = time.time()
 
+            # Salva checkpoint PRIMA di fare modifiche ai parametri
+            try:
+                self._last_checkpoint = self._save_checkpoint()
+            except Exception as exc:
+                logger.debug(f"EvolutionEngine checkpoint save error: {exc}")
+
             # Loop #1: push updated agent weights to DecisionFusion
             try:
                 weight_map = self._meta.adjust_weights()
@@ -504,6 +514,12 @@ class EvolutionEngine:
             # Drawdown circuit breaker (V17)
             self._check_drawdown()
 
+            # Dopo le modifiche: controlla il win rate e fai rollback se degradato
+            try:
+                self._maybe_rollback()
+            except Exception as exc:
+                logger.debug(f"EvolutionEngine rollback check error: {exc}")
+
             # Loop #9: Re-fit HMM every 2 hours with updated data
             if self._hmm is not None and (now - self._last_hmm_fit) >= 7200:
                 try:
@@ -527,6 +543,58 @@ class EvolutionEngine:
                     len(self._closed_trades_buffer) >= _BACKTEST_MIN_TRADES):
                 self._run_backtest_validation()
                 self._last_backtest_validation = now
+
+    def _save_checkpoint(self) -> dict:
+        """Cattura lo stato corrente dei parametri principali per il rollback."""
+        checkpoint = {
+            "fusion_threshold": getattr(self._fusion, "_threshold", 0.5),
+            "agent_weights": dict(getattr(self._fusion, "_weights", {})),
+            "tf_weights": dict(getattr(self._confluence_adapter._confluence, "_tf_weights", {})),
+            "timestamp": time.time(),
+        }
+        # Calcola il win rate corrente dal buffer chiuso
+        if self._closed_trades_buffer:
+            recent = self._closed_trades_buffer[-20:]
+            self._checkpoint_win_rate = sum(1 for t in recent if t.get("win")) / len(recent)
+        return checkpoint
+
+    def _restore_checkpoint(self, checkpoint: dict) -> None:
+        """Ripristina i parametri salvati nel checkpoint."""
+        if checkpoint is None:
+            return
+        try:
+            thresh = checkpoint.get("fusion_threshold")
+            if thresh is not None:
+                self._fusion._threshold = float(thresh)
+        except Exception:
+            pass
+        try:
+            weights = checkpoint.get("agent_weights")
+            if weights:
+                self._fusion.update_weights(weights)
+        except Exception:
+            pass
+        try:
+            tf_weights = checkpoint.get("tf_weights")
+            if tf_weights and hasattr(self._confluence_adapter, "_confluence"):
+                self._confluence_adapter._confluence.update_tf_weights(tf_weights)
+        except Exception:
+            pass
+
+    def _maybe_rollback(self) -> None:
+        """Controlla il win rate recente e ripristina il checkpoint se è calato >10%."""
+        if self._last_checkpoint is None or len(self._closed_trades_buffer) < 10:
+            return
+        recent = self._closed_trades_buffer[-20:]
+        current_wr = sum(1 for t in recent if t.get("win")) / len(recent)
+        rollback_threshold = self._checkpoint_win_rate - 0.10
+        if current_wr < rollback_threshold:
+            logger.warning(
+                f"⚠️ EvolutionEngine rollback: win_rate calato da "
+                f"{self._checkpoint_win_rate:.2f} a {current_wr:.2f} — "
+                f"ripristino parametri checkpoint"
+            )
+            self._restore_checkpoint(self._last_checkpoint)
 
     def _run_v18_loops(self) -> None:
         """Execute all V18 periodic feedback loops."""
