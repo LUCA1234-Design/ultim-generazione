@@ -27,6 +27,8 @@ from config.settings import (
     MIN_AGENT_CONFIRMATIONS,
     MIN_RR,
     NON_OPTIMAL_HOUR_PENALTY,
+    HIGH_MARGIN_ONLY,
+    HIGH_MARGIN_MIN_RR,
 )
 
 logger = logging.getLogger("EventProcessor")
@@ -107,6 +109,7 @@ class EventProcessor:
             # V18 kill switch reasons
             "kill_switch_killed": 0,
             "kill_switch_safe_mode": 0,
+            "low_margin": 0,
         }
 
     # ------------------------------------------------------------------
@@ -516,6 +519,15 @@ class EventProcessor:
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_rr | "
                 f"rr={rr:.2f} min={MIN_RR:.2f} entry={entry:.4f} sl={sl:.4f} tp1={tp1:.4f}"
+            )
+            return None
+
+        # High margin filter: skip signals with insufficient R/R when filter is active
+        if HIGH_MARGIN_ONLY and rr < HIGH_MARGIN_MIN_RR:
+            self._skip("low_margin")
+            logger.info(
+                f"⛔ {symbol}/{interval} SKIP: low_margin | "
+                f"rr={rr:.2f} min_high_margin={HIGH_MARGIN_MIN_RR:.2f}"
             )
             return None
 

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from config.settings import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_RATE_LIMIT
+from config.settings import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, TELEGRAM_RATE_LIMIT, HIGH_MARGIN_MIN_RR, HIGH_MARGIN_BADGE
 from agents.base_agent import AgentResult
 from engine.decision_fusion import FusionResult
 from engine.execution import Position
@@ -94,17 +94,44 @@ def build_signal_message(
     risk_result = agent_results.get("risk")
     rr = risk_result.metadata.get("rr", 0) if risk_result else 0
 
+    # Calculate % gain for TP1 and TP2
+    entry = position.entry_price
+    tp1 = position.tp1
+    tp2 = position.tp2
+    if direction == "long":
+        pct_tp1 = ((tp1 - entry) / entry) * 100 if entry > 0 else 0.0
+        pct_tp2 = ((tp2 - entry) / entry) * 100 if entry > 0 else 0.0
+    else:
+        pct_tp1 = ((entry - tp1) / entry) * 100 if entry > 0 else 0.0
+        pct_tp2 = ((entry - tp2) / entry) * 100 if entry > 0 else 0.0
+
+    is_high_margin = rr >= HIGH_MARGIN_MIN_RR
+
+    header_line = f"{dir_emoji} *{symbol}* [{interval}] — *{direction.upper()}* (R/R {rr:.1f}x)"
+    if is_high_margin:
+        header_line = f"{HIGH_MARGIN_BADGE}\n{header_line}"
+
     lines = [
-        f"{dir_emoji} *{symbol}* [{interval}] — *{direction.upper()}* (R/R {rr:.1f}x)",
+        header_line,
         "",
-        f"💰 Entry: `{position.entry_price:.4f}`",
+        f"💰 Entry: `{entry:.4f}`",
         f"🛑 SL: `{position.sl:.4f}`",
-        f"🎯 TP1: `{position.tp1:.4f}` | TP2: `{position.tp2:.4f}`",
+        f"🎯 TP1: `{tp1:.4f}` | TP2: `{tp2:.4f}`",
         "",
         f"📊 Fusion Score: `{score:.3f}`",
         f"{'📄 PAPER TRADE' if position.paper else '⚡ LIVE TRADE'}",
         "",
     ]
+
+    # MARGINE DI GUADAGNO section
+    margin_lines = [
+        "💰 *MARGINE DI GUADAGNO*",
+        f"  TP1: +{pct_tp1:.2f}%",
+        f"  TP2: +{pct_tp2:.2f}%",
+        f"  R/R: {rr:.1f}x",
+    ]
+    lines.extend(margin_lines)
+    lines.append("")
 
     # Signal type badges
     pattern_result = agent_results.get("pattern")

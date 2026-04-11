@@ -218,6 +218,15 @@ if TRAINING_MODE:
     MAX_OPEN_POSITIONS = TRAINING_MAX_OPEN_POSITIONS
 
 # ============================================================
+# HIGH MARGIN FILTER
+# ============================================================
+
+HIGH_MARGIN_ONLY = True              # Se True, invia notifiche Telegram SOLO per segnali con R/R >= HIGH_MARGIN_MIN_RR
+HIGH_MARGIN_MIN_RR = 2.5             # R/R minimo per considerare un segnale "high margin"
+HIGH_MARGIN_MIN_FUSION_SCORE = 0.55  # Fusion score minimo per segnali high margin
+HIGH_MARGIN_BADGE = "🔥 HIGH MARGIN" # Badge da aggiungere ai messaggi
+
+# ============================================================
 # V18 — REINFORCEMENT LEARNING
 # ============================================================
 
