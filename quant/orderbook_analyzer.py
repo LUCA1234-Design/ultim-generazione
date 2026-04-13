@@ -22,11 +22,11 @@ well-established heuristics:
 Integration: used by OrderFlowAgent to complement VPIN/Kyle signals.
 """
 import logging
+import time
 from typing import Optional
 
 import numpy as np
 import pandas as pd
-import time
 
 logger = logging.getLogger("OrderBookAnalyzer")
 

@@ -112,7 +112,7 @@ class TWAPSlicer:
         avg_fill = (cost / filled_qty) if filled_qty > 1e-12 else 0.0
         slippage = abs(avg_fill - entry_price) / entry_price * 100.0 if entry_price > 0 and avg_fill > 0 else 0.0
         logger.info(
-            "🧊 TWAP %s %s: filled=%.6f/%0.6f avg=%.4f fallbacks=%s",
+            "🧊 TWAP %s %s: filled=%.6f/%.6f avg=%.4f fallbacks=%s",
             symbol, side, filled_qty, total_qty, avg_fill, n_market_fallbacks,
         )
         return OrderResult(
