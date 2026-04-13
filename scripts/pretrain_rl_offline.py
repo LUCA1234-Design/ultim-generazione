@@ -46,11 +46,18 @@ def _prepare_df(df: pd.DataFrame) -> pd.DataFrame:
     out["timestamp"] = pd.to_datetime(out["timestamp"], utc=True)
     out = out.sort_values("timestamp").reset_index(drop=True)
     close = out["close"].astype(float)
-    out["rsi"] = close.diff().fillna(0).rolling(14).mean()
-    out["atr"] = (out["high"].astype(float) - out["low"].astype(float)).rolling(14).mean().fillna(0)
-    out["volume_ratio"] = out["volume"].astype(float) / out["volume"].astype(float).rolling(20).mean().replace(0, np.nan)
-    out["volume_ratio"] = out["volume_ratio"].fillna(1.0)
-    return out[["timestamp", "open", "high", "low", "close", "volume"]]
+    delta = close.diff().fillna(0.0)
+    gains = delta.clip(lower=0.0)
+    losses = (-delta).clip(lower=0.0)
+    avg_gain = gains.rolling(14, min_periods=14).mean()
+    avg_loss = losses.rolling(14, min_periods=14).mean().replace(0, np.nan)
+    rs = avg_gain / avg_loss
+    out["rsi"] = (100.0 - (100.0 / (1.0 + rs))).fillna(50.0)
+    out["atr"] = (out["high"].astype(float) - out["low"].astype(float)).rolling(14).mean().fillna(0.0)
+    out["volume_ratio"] = (
+        out["volume"].astype(float) / out["volume"].astype(float).rolling(20).mean().replace(0, np.nan)
+    ).fillna(1.0)
+    return out[["timestamp", "open", "high", "low", "close", "volume", "rsi", "atr", "volume_ratio"]]
 
 
 def _split_train_val(df: pd.DataFrame, validation_months: int) -> Tuple[pd.DataFrame, pd.DataFrame]:
