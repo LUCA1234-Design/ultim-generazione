@@ -283,15 +283,16 @@ class PPOAgent:
     def save(self, path: str) -> bool:
         """Save model parameters to a numpy .npz file."""
         try:
-            np.savez(
-                path,
-                actor_W1=self._actor.W1, actor_b1=self._actor.b1,
-                actor_W2=self._actor.W2, actor_b2=self._actor.b2,
-                actor_W3=self._actor.W3, actor_b3=self._actor.b3,
-                critic_W1=self._critic.W1, critic_b1=self._critic.b1,
-                critic_W2=self._critic.W2, critic_b2=self._critic.b2,
-                critic_W3=self._critic.W3, critic_b3=self._critic.b3,
-            )
+            with open(path, "wb") as f:
+                np.savez(
+                    f,
+                    actor_W1=self._actor.W1, actor_b1=self._actor.b1,
+                    actor_W2=self._actor.W2, actor_b2=self._actor.b2,
+                    actor_W3=self._actor.W3, actor_b3=self._actor.b3,
+                    critic_W1=self._critic.W1, critic_b1=self._critic.b1,
+                    critic_W2=self._critic.W2, critic_b2=self._critic.b2,
+                    critic_W3=self._critic.W3, critic_b3=self._critic.b3,
+                )
             return True
         except Exception as exc:
             logger.error(f"PPOAgent.save error: {exc}")
@@ -300,24 +301,29 @@ class PPOAgent:
     def load(self, path: str) -> bool:
         """Load model parameters from a .npz file."""
         try:
-            data = np.load(path)
-            self._actor.W1 = data["actor_W1"]
-            self._actor.b1 = data["actor_b1"]
-            self._actor.W2 = data["actor_W2"]
-            self._actor.b2 = data["actor_b2"]
-            self._actor.W3 = data["actor_W3"]
-            self._actor.b3 = data["actor_b3"]
-            self._critic.W1 = data["critic_W1"]
-            self._critic.b1 = data["critic_b1"]
-            self._critic.W2 = data["critic_W2"]
-            self._critic.b2 = data["critic_b2"]
-            self._critic.W3 = data["critic_W3"]
-            self._critic.b3 = data["critic_b3"]
+            with open(path, "rb") as f:
+                data = np.load(f)
+                self._actor.W1 = data["actor_W1"]
+                self._actor.b1 = data["actor_b1"]
+                self._actor.W2 = data["actor_W2"]
+                self._actor.b2 = data["actor_b2"]
+                self._actor.W3 = data["actor_W3"]
+                self._actor.b3 = data["actor_b3"]
+                self._critic.W1 = data["critic_W1"]
+                self._critic.b1 = data["critic_b1"]
+                self._critic.W2 = data["critic_W2"]
+                self._critic.b2 = data["critic_b2"]
+                self._critic.W3 = data["critic_W3"]
+                self._critic.b3 = data["critic_b3"]
             self._is_trained = True
             return True
         except Exception as exc:
             logger.error(f"PPOAgent.load error: {exc}")
             return False
+
+    def load_pretrained(self, path: str) -> bool:
+        """Load an offline pretrained checkpoint."""
+        return self.load(path)
 
     # ------------------------------------------------------------------
     # Private helpers

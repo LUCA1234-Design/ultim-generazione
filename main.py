@@ -15,6 +15,7 @@ from config.settings import (
     HG_MIN_QUOTE_VOL, SYMBOLS_LIMIT, TELEGRAM_TEST_ON_START,
     STARTUP_TIMEOUT, POLL_CLOSED_ENABLE, DB_PATH,
     HEARTBEAT_INTERVAL, HEARTBEAT_ENABLED,
+    ORDERBOOK_STREAM_ENABLED, ORDERBOOK_MAX_SYMBOLS,
     TRAINING_MODE, TRAINING_TARGET_TRADES,
     TRAINING_FUSION_THRESHOLD, TRAINING_MIN_FUSION_SCORE,
     TRAINING_MIN_AGENT_CONFIRMATIONS, TRAINING_MIN_RR, TRAINING_NON_OPTIMAL_HOUR_PENALTY,
@@ -106,6 +107,11 @@ from services.notification_worker import (
     start_notification_worker,
     enqueue_signal_notification,
 )
+try:
+    from services.latency_monitor import get_latency_report, start_latency_monitor
+    _LATENCY_MONITOR_AVAILABLE = True
+except ImportError:
+    _LATENCY_MONITOR_AVAILABLE = False
 
 # ---- Notifications ----
 from notifications.telegram_service import (
@@ -562,6 +568,7 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
                 training_status = "🎯 Sniper Mode attivo"
             else:
                 training_status = f"📚 Trade: {completed_trades}/{TRAINING_TARGET_TRADES} → Training Mode"
+            latency_info = get_latency_report() if _LATENCY_MONITOR_AVAILABLE else None
 
             msg = build_heartbeat_message(
                 uptime_hours=hours,
@@ -575,6 +582,7 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
                 fusion_threshold=fusion_threshold,
                 last_signal_info=last_signal_info,
                 training_status=training_status,
+                latency_info=latency_info,
             )
             send_message(msg)
             logger.info("🫀 Heartbeat sent")
@@ -663,12 +671,24 @@ def main():
 
         # ---- Binance client (initialise early to validate credentials) ----
         _ = get_client()
+        if _LATENCY_MONITOR_AVAILABLE:
+            start_latency_monitor()
 
         # ---- Load symbol universes ----
         load_universes()
 
         if not symbols_whitelist:
             raise ValueError("❌ No symbols loaded for scanning!")
+
+        # Start L2 order book streams for top symbols
+        if ORDERBOOK_STREAM_ENABLED:
+            try:
+                from data.orderbook_stream import start_orderbook_streams
+                ob_symbols = symbols_whitelist[:ORDERBOOK_MAX_SYMBOLS]
+                start_orderbook_streams(ob_symbols)
+                logger.info(f"📡 L2 OrderBook streams started for {len(ob_symbols)} symbols")
+            except Exception as e:
+                logger.warning(f"OrderBook streams unavailable: {e}")
 
         # ---- Preload historical data ----
         logger.info(f"📥 Preloading history for {len(symbols_whitelist)} symbols (main list)...")

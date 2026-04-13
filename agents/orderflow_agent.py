@@ -27,7 +27,7 @@ logger = logging.getLogger("OrderFlowAgent")
 
 try:
     from quant.microstructure import compute_vpin, compute_trade_imbalance, get_microstructure_score
-    from quant.orderbook_analyzer import get_orderbook_signal
+    from quant.orderbook_analyzer import get_orderbook_signal, get_realtime_orderbook_signal
     _QUANT_AVAILABLE = True
 except ImportError:
     _QUANT_AVAILABLE = False
@@ -85,17 +85,29 @@ class OrderFlowAgent(BaseAgent):
             if micro_score is None:
                 micro_score = 0.0
 
-            # ---- Order book proxy ----
-            ob_signal = get_orderbook_signal(df)
-            absorption = ob_signal.get("absorption", 0.0)
-            imbalance = ob_signal.get("imbalance", 0.5)
-            iceberg = ob_signal.get("iceberg_recent", False)
+            # ---- Order book signal (real L2 preferred, OHLCV proxy fallback) ----
+            realtime_ob = get_realtime_orderbook_signal(symbol, df=df)
+            using_real = bool(realtime_ob.get("using_real_data", False))
+            if using_real:
+                absorption = float(realtime_ob.get("absorption", 0.0))
+                imbalance = float(realtime_ob.get("real_imbalance", 0.5))
+                trade_flow = float(realtime_ob.get("order_flow_imbalance", 0.0))  # [-1,1]
+                trade_imbalance = float(np.clip((trade_flow + 1.0) / 2.0, 0.0, 1.0))  # [0,1]
+                iceberg = False
+                details.append("📡 L2 Real Data")
+            else:
+                ob_signal = get_orderbook_signal(df)
+                absorption = float(ob_signal.get("absorption", 0.0))
+                imbalance = float(ob_signal.get("imbalance", 0.5))
+                iceberg = bool(ob_signal.get("iceberg_recent", False))
+                trade_imbalance = 0.5
+                details.append("📊 OHLCV Proxy")
 
             # ---- Trade imbalance ----
-            imb_series = compute_trade_imbalance(df, window=20)
-            trade_imbalance = 0.5
-            if imb_series is not None and not imb_series.dropna().empty:
-                trade_imbalance = float(imb_series.dropna().iloc[-1])
+            if not using_real:
+                imb_series = compute_trade_imbalance(df, window=20)
+                if imb_series is not None and not imb_series.dropna().empty:
+                    trade_imbalance = float(imb_series.dropna().iloc[-1])
 
             # ---- VPIN ----
             vpin_series = compute_vpin(df, n_buckets=min(50, len(df) // 2))
@@ -148,7 +160,10 @@ class OrderFlowAgent(BaseAgent):
             metadata.update({
                 "microstructure_score": micro_score,
                 "trade_imbalance": trade_imbalance,
+                "real_orderbook": using_real,
                 "absorption": absorption,
+                "real_imbalance": imbalance,
+                "order_flow_imbalance": float(realtime_ob.get("order_flow_imbalance", 0.0)),
                 "vpin": vpin_val,
                 "iceberg_detected": iceberg,
             })

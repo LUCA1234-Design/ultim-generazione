@@ -22,6 +22,7 @@ from config.settings import (
     MAX_CONSECUTIVE_LOSSES,
     MAX_TOTAL_DRAWDOWN_PCT,
     MAX_WEEKLY_LOSS_PCT,
+    ORDER_ROUTING_ENABLED,
 )
 from data.binance_client import place_futures_order
 
@@ -217,6 +218,27 @@ class ExecutionEngine:
             else:
                 # Esecuzione reale: leggo il fill price effettivo da Binance
                 side = "BUY" if direction == "long" else "SELL"
+                order = None
+                if ORDER_ROUTING_ENABLED:
+                    try:
+                        from engine.order_slicer import SmartOrderRouter
+                        router = SmartOrderRouter()
+                        result = router.route_order(symbol, side, size * entry_price, entry_price)
+                        if result.success:
+                            real_entry = float(result.avg_fill_price)
+                            if real_entry > 0:
+                                pos.entry_price = real_entry
+                                slippage_pct = abs(real_entry - entry_price) / max(entry_price, 1e-8) * 100.0
+                                logger.info(
+                                    f"🧠 Smart routing [{symbol}] strategy={result.strategy_used} "
+                                    f"slippage={slippage_pct:.3f}% orders={result.n_orders_placed}"
+                                )
+                            self._open_positions[pos_id] = pos
+                            logger.info(f"✅ LIVE OPEN [{pos_id}] {symbol} {direction.upper()} smart-routed")
+                            return pos
+                    except Exception as e:
+                        logger.warning(f"SmartOrderRouter error [{symbol}]: {e}")
+
                 order = place_futures_order(symbol, side, "MARKET", size)
                 if order is None:
                     logger.error(f"Failed to open live position for {symbol}")

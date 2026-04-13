@@ -109,6 +109,16 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
         is_closed: bool = kline.get("x", False)
         key = f"{symbol}_{interval}"
 
+        # Measure delay between Binance kline close timestamp and local receive time
+        kline_close_time_ms = int(kline.get("T", 0))
+        if kline_close_time_ms > 0:
+            ws_delay_ms = (time.time() * 1000) - kline_close_time_ms
+            try:
+                from services.latency_monitor import record_ws_delay
+                record_ws_delay(ws_delay_ms)
+            except Exception:
+                pass
+
         now = time.time()
         _LAST_MESSAGE_TIME[ws_name] = now
         WS_HEALTH[ws_name] = {

@@ -30,6 +30,7 @@ Usage in main.py:
     engine.shutdown()                               # on Ctrl+C
 """
 import logging
+import os
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -182,6 +183,15 @@ class EvolutionEngine:
         if _RL_AVAILABLE and self._ppo is None:
             try:
                 self._ppo = _PPOAgent()
+            except Exception:
+                pass
+        if self._ppo is not None:
+            try:
+                pretrained_path = "models/ppo_pretrained.pt"
+                if os.path.exists(pretrained_path):
+                    loaded = self._ppo.load_pretrained(pretrained_path)
+                    if loaded:
+                        logger.info("🎓 PPO: loaded pretrained model from offline training")
             except Exception:
                 pass
 

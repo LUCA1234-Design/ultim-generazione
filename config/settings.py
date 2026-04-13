@@ -131,6 +131,19 @@ TELEGRAM_TEST_ON_START = True
 # ============================================================
 
 DB_PATH = "v17_experience.db"
+DB_BACKEND = os.getenv("DB_BACKEND", "sqlite")   # "sqlite" | "timescaledb"
+DB_TIMESCALE_URL = os.getenv("DB_TIMESCALE_URL", "postgresql://user:pass@localhost:5432/trading_db")
+
+# ============================================================
+# ORDER BOOK L2 STREAMING
+# ============================================================
+
+ORDERBOOK_STREAM_ENABLED = True
+ORDERBOOK_MAX_SYMBOLS = 20
+ORDERBOOK_DEPTH_LEVELS = 20
+ORDERBOOK_UPDATE_MS = 100
+ORDERBOOK_TRADE_WINDOW_SEC = 60
+ORDERBOOK_STALE_SEC = 5
 
 # ============================================================
 # REGIME AGENT
@@ -309,6 +322,33 @@ BACKTEST_MIN_WIN_RATE = 0.45
 BACKTEST_MAX_DRAWDOWN = 0.20
 BACKTEST_VALIDATION_INTERVAL = 7200
 BACKTEST_MIN_TRADES = 20
+
+# ============================================================
+# SMART ORDER ROUTING
+# ============================================================
+
+ORDER_ROUTING_ENABLED = True
+ORDER_TWAP_N_SLICES = 5
+ORDER_TWAP_INTERVAL_SEC = 10
+ORDER_TWAP_TIMEOUT_SEC = 30
+ORDER_ICEBERG_N_SLICES = 10
+ORDER_ICEBERG_VISIBLE_PCT = 0.20
+ORDER_ADV_LOOKBACK_CANDLES = 96
+ORDER_MARKET_THRESHOLD_PCT = 0.001
+
+# ============================================================
+# RL OFFLINE PRE-TRAINING
+# ============================================================
+
+RL_PRETRAIN_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT"]
+RL_PRETRAIN_INTERVALS = ["15m", "1h", "4h"]
+RL_PRETRAIN_YEARS = 3
+RL_PRETRAIN_EPISODES_PER_DATASET = 200
+RL_PRETRAIN_WINDOW_SIZE = 500
+RL_PRETRAIN_CHECKPOINT_EVERY = 100
+RL_PRETRAIN_MODEL_PATH = "models/ppo_pretrained.pt"
+RL_PRETRAIN_CACHE_DIR = "data/historical_cache"
+RL_PRETRAIN_VALIDATION_MONTHS = 6
 
 # ============================================================
 # KELLY WARMUP

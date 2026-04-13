@@ -12,3 +12,5 @@ pytest-mock>=3.10.0
 # V18 additions (optional but recommended)
 hmmlearn>=0.3.0          # HMM regime detection (Loop #9); falls back to numpy implementation
 gymnasium>=0.29.0        # Gym-compatible RL environment interface
+# Optional TimescaleDB backend
+psycopg2-binary>=2.9.9; extra == "timescaledb"

@@ -26,8 +26,20 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+import time
 
 logger = logging.getLogger("OrderBookAnalyzer")
+
+try:
+    from config.settings import ORDERBOOK_STALE_SEC
+except Exception:
+    ORDERBOOK_STALE_SEC = 5
+
+try:
+    from data.orderbook_stream import get_orderbook_snapshot
+    _REAL_ORDERBOOK_AVAILABLE = True
+except Exception:
+    _REAL_ORDERBOOK_AVAILABLE = False
 
 # Tuning constants
 _ICEBERG_VOL_ZSCORE = 2.0    # volume z-score threshold for anomaly
@@ -202,4 +214,56 @@ def get_orderbook_signal(df: pd.DataFrame) -> dict:
     except Exception as exc:
         logger.debug(f"get_orderbook_signal error: {exc}")
 
+    return result
+
+
+def get_realtime_orderbook_signal(symbol: str, df: Optional[pd.DataFrame] = None) -> dict:
+    """Use real L2 snapshot if fresh, otherwise fallback to OHLCV proxies."""
+    proxy = get_orderbook_signal(df) if df is not None else {
+        "imbalance": 0.5,
+        "iceberg_recent": False,
+        "absorption": 0.0,
+        "direction": "neutral",
+    }
+    result = {
+        "real_imbalance": float(proxy.get("imbalance", 0.5)),
+        "order_flow_imbalance": 0.0,
+        "absorption": float(proxy.get("absorption", 0.0)),
+        "using_real_data": False,
+        "direction": proxy.get("direction", "neutral"),
+        "iceberg_recent": bool(proxy.get("iceberg_recent", False)),
+    }
+    if not _REAL_ORDERBOOK_AVAILABLE:
+        return result
+
+    try:
+        snap = get_orderbook_snapshot(symbol)
+        if not snap:
+            return result
+        age = time.time() - float(snap.get("last_update_ts", 0.0))
+        if age > ORDERBOOK_STALE_SEC:
+            return result
+
+        buy_vol = float(snap.get("cumulative_buy_volume", 0.0))
+        sell_vol = float(snap.get("cumulative_sell_volume", 0.0))
+        flow_denom = buy_vol + sell_vol
+        flow_imb = ((buy_vol - sell_vol) / flow_denom) if flow_denom > 1e-12 else 0.0
+        real_imb = float(snap.get("bid_ask_imbalance", 0.5))
+
+        absorption = 0.0
+        if real_imb > 0.65 and flow_imb > 0.1:
+            absorption = 1.0
+        elif real_imb < 0.35 and flow_imb < -0.1:
+            absorption = -1.0
+
+        result.update({
+            "real_imbalance": real_imb,
+            "order_flow_imbalance": float(np.clip(flow_imb, -1.0, 1.0)),
+            "absorption": float(absorption),
+            "using_real_data": True,
+            "direction": "long" if absorption > 0 else ("short" if absorption < 0 else "neutral"),
+            "iceberg_recent": False,
+        })
+    except Exception as exc:
+        logger.debug(f"get_realtime_orderbook_signal error: {exc}")
     return result
