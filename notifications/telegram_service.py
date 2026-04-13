@@ -212,7 +212,8 @@ def build_heartbeat_message(uptime_hours: int, uptime_minutes: int,
                             skip_reasons: dict,
                             fusion_threshold: float = 0.0,
                             last_signal_info: str = "",
-                            training_status: str = "") -> str:
+                            training_status: str = "",
+                            latency_info: Optional[dict] = None) -> str:
     """Build the periodic heartbeat message string."""
     skip_sorted = sorted(skip_reasons.items(), key=lambda x: x[1], reverse=True)
     skip_lines = "\n".join(
@@ -235,6 +236,14 @@ def build_heartbeat_message(uptime_hours: int, uptime_minutes: int,
     ]
     if training_status:
         lines.append(f"{training_status}")
+    if latency_info:
+        lines.append(
+            "🌐 Latency: RTT={:.0f}ms (p95={:.0f}ms) | WS delay={:.0f}ms".format(
+                float(latency_info.get("mean_rtt_ms", 0.0)),
+                float(latency_info.get("p95_rtt_ms", 0.0)),
+                float(latency_info.get("ws_delay_mean_ms", 0.0)),
+            )
+        )
     if last_signal_info:
         lines.append(f"📡 Ultimo segnale: {last_signal_info}")
     lines.append("")
