@@ -39,7 +39,8 @@ try:
     from data.orderbook_stream import get_orderbook_snapshot
     _REAL_ORDERBOOK_AVAILABLE = True
 except Exception:
-    def get_orderbook_snapshot(_symbol: str):
+    def get_orderbook_snapshot(symbol: str):
+        _ = symbol
         return None
     _REAL_ORDERBOOK_AVAILABLE = False
 

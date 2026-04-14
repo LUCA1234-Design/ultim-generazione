@@ -681,7 +681,7 @@ def main():
         if not symbols_whitelist:
             raise ValueError("❌ No symbols loaded for scanning!")
 
-        # --- Step 1: Avvia L2 Order Book streams per i top simboli ---
+        # --- Step 1: Start L2 Order Book streams for top symbols ---
         try:
             from data.orderbook_stream import start_orderbook_streams
             from config.settings import ORDERBOOK_STREAM_ENABLED, ORDERBOOK_MAX_SYMBOLS
@@ -693,7 +693,7 @@ def main():
         except Exception as e:
             logger.warning(f"⚠️ OrderBook streams unavailable: {e}")
 
-        # --- Step 3: Avvia Latency Monitor ---
+        # --- Step 3: Start Latency Monitor ---
         try:
             from services.latency_monitor import start_latency_monitor
             start_latency_monitor()
