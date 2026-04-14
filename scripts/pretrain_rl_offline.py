@@ -9,7 +9,6 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
-from backtesting.historical_replay import run_backtest
 from rl.ppo_agent import PPOAgent
 from rl.trading_env import TradingEnv
 from scripts.download_historical import download as download_historical
@@ -167,15 +166,17 @@ def main() -> None:
     for _, symbol, interval, _, _, val_df in datasets:
         if len(val_df) < 100:
             continue
-        bt = run_backtest(
-            val_df,
-            {"initial_balance": 10000.0, "slippage": 0.0005, "commission": 0.0006},
-            signal_fn=None,
-        )
-        validations.append(bt)
+        try:
+            val_ep = _rollout_episode(env, ppo, val_df, window_size=min(len(val_df), args.window_size))
+            validations.append(val_ep["stats"])
+        except Exception as e:
+            print(f"  Warning: validation failed for {symbol}/{interval}: {e}")
 
     final_sharpe = float(np.mean([v.get("sharpe_ratio", 0.0) for v in validations])) if validations else 0.0
-    final_win_rate = float(np.mean([v.get("win_rate", 0.0) for v in validations])) if validations else 0.0
+    final_win_rate = float(np.mean([
+        1.0 if v.get("total_return", 0.0) > 0 else 0.0
+        for v in validations
+    ])) if validations else 0.0
 
     report = {
         "total_episodes": args.episodes,

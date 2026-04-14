@@ -20,6 +20,7 @@ def test_realtime_orderbook_signal_fallback(monkeypatch):
     out = oba.get_realtime_orderbook_signal("BTCUSDT", df=_df())
     assert out["using_real_data"] is False
     assert "real_imbalance" in out
+    assert out["order_flow_imbalance"] == 0.0
 
 
 def test_realtime_orderbook_signal_real_data(monkeypatch):
@@ -37,4 +38,5 @@ def test_realtime_orderbook_signal_real_data(monkeypatch):
     out = oba.get_realtime_orderbook_signal("BTCUSDT", df=_df())
     assert out["using_real_data"] is True
     assert out["real_imbalance"] == 0.8
+    assert out["order_flow_imbalance"] > 0.0
     assert out["direction"] == "long"

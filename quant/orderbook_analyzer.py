@@ -39,6 +39,8 @@ try:
     from data.orderbook_stream import get_orderbook_snapshot
     _REAL_ORDERBOOK_AVAILABLE = True
 except Exception:
+    def get_orderbook_snapshot(_symbol: str):
+        return None
     _REAL_ORDERBOOK_AVAILABLE = False
 
 # Tuning constants
@@ -246,22 +248,27 @@ def get_realtime_orderbook_signal(symbol: str, df: Optional[pd.DataFrame] = None
 
         buy_vol = float(snap.get("cumulative_buy_volume", 0.0))
         sell_vol = float(snap.get("cumulative_sell_volume", 0.0))
-        flow_denom = buy_vol + sell_vol
-        flow_imb = ((buy_vol - sell_vol) / flow_denom) if flow_denom > 1e-12 else 0.0
+        total_vol = buy_vol + sell_vol
+        if total_vol > 1e-8:
+            order_flow_imbalance = (buy_vol - sell_vol) / total_vol
+        else:
+            order_flow_imbalance = 0.0
         real_imb = float(snap.get("bid_ask_imbalance", 0.5))
 
-        absorption = 0.0
-        if real_imb > 0.65 and flow_imb > 0.1:
-            absorption = 1.0
-        elif real_imb < 0.35 and flow_imb < -0.1:
-            absorption = -1.0
+        combined = (real_imb - 0.5) * 2.0 * 0.5 + order_flow_imbalance * 0.5
+        if combined > 0.3:
+            direction = "long"
+        elif combined < -0.3:
+            direction = "short"
+        else:
+            direction = "neutral"
 
         result.update({
             "real_imbalance": real_imb,
-            "order_flow_imbalance": float(np.clip(flow_imb, -1.0, 1.0)),
-            "absorption": float(absorption),
+            "order_flow_imbalance": float(np.clip(order_flow_imbalance, -1.0, 1.0)),
+            "absorption": float(np.clip(combined, -1.0, 1.0)),
             "using_real_data": True,
-            "direction": "long" if absorption > 0 else ("short" if absorption < 0 else "neutral"),
+            "direction": direction,
             "iceberg_recent": False,
         })
     except Exception as exc:
