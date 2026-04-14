@@ -17,7 +17,8 @@ TELEGRAM_CHAT_ID = "675648539"
 # AI SETTINGS
 # ============================================================
 
-AI_ENABLED = True
+# AI locale non collegato al loop live in questa versione
+# AI_ENABLED = True  (non usato)
 AI_SYNC_ON_SIGNAL = True
 AI_SECTION_IN_MSG = True
 AI_URL_SCOUT = "http://127.0.0.1:1234/v1/chat/completions"
@@ -33,7 +34,8 @@ AI_CALL_COOLDOWN = 300
 
 PAPER_TRADING = True           # Paper trading ON by default
 ACCOUNT_BALANCE = 1000.0
-THRESHOLD_BASE = 0.35
+# THRESHOLD_BASE è deprecato — usare FUSION_THRESHOLD_DEFAULT
+# THRESHOLD_BASE = 0.35  # deprecato
 MAX_OPEN_POSITIONS = 3
 LEVERAGE = 10
 
@@ -260,6 +262,9 @@ RL_N_ACTIONS = 8                # action space size
 RL_PPO_EPOCHS = 4               # optimisation epochs per PPO update
 RL_TRAIN_OFFLINE = True         # train offline on historical sim episodes
 RL_INFERENCE_ENABLED = True     # use PPO for live inference suggestions
+RL_SIZE_HINT_ENABLED = True     # abilita il size hint dal PPO
+RL_SIZE_MULT_MIN = 0.6          # moltiplicatore minimo
+RL_SIZE_MULT_MAX = 1.4          # moltiplicatore massimo
 
 # ============================================================
 # V18 — META-LEARNING

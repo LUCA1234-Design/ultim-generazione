@@ -300,6 +300,7 @@ def build_system():
     fusion = DecisionFusion()
     execution = ExecutionEngine(paper_trading=PAPER_TRADING, initial_balance=ACCOUNT_BALANCE)
     tracker = PerformanceTracker()
+    supervisor = None
 
     # decision_id -> context used later on position close
     decision_context: Dict[str, Dict[str, Any]] = {}
@@ -363,6 +364,13 @@ def build_system():
         except Exception:
             pass
 
+    try:
+        from coordination.agent_supervisor import AgentSupervisor
+        supervisor = AgentSupervisor()
+        logger.info("🔎 V18 AgentSupervisor: ON")
+    except ImportError:
+        supervisor = None
+
     processor = EventProcessor(
         pattern_agent=pattern,
         regime_agent=regime,
@@ -377,6 +385,7 @@ def build_system():
         sentiment_agent=sentiment,
         correlation_agent=correlation,
         contrarian_agent=contrarian,
+        supervisor=supervisor,
     )
 
     logger.info("✅ V17+V18 agent system ready")
@@ -732,6 +741,7 @@ def main():
             confluence_agent=confluence_agent,
             tracker=tracker,
             pattern_agent=pattern_agent,
+            regime_agent=processor.regime,
         )
         evolution_engine.startup()
 
@@ -742,6 +752,44 @@ def main():
                 logger.info("🔴 V18 KillSwitch: wired to EventProcessor")
         except Exception as e:
             logger.warning(f"KillSwitch wiring error: {e}")
+
+        # ---- V18: Wire PPO size hints from EvolutionEngine to EventProcessor ----
+        try:
+            processor._evolution_engine = evolution_engine
+            logger.info("🎓 PPO RL size hints: wired to EventProcessor")
+        except Exception as _e:
+            logger.debug(f"🎓 PPO wiring error: {_e}")
+
+        # ---- V18: Register MessageBus subscribers ----
+        if msg_bus is not None:
+            try:
+                from coordination.message_bus import TOPIC_RISK_ALERT, TOPIC_DRIFT_DETECTED
+
+                def _on_risk_alert(msg):
+                    logger.warning(f"📡 MessageBus RISK_ALERT received: {msg}")
+                    try:
+                        if state_machine is not None:
+                            current = state_machine.current_state()
+                            if current not in ("KILLED", "SAFE_MODE"):
+                                state_machine.transition("risk_alert")
+                                logger.warning(f"📡 StateMachine → {state_machine.current_state()} (risk_alert)")
+                    except Exception as _sm_err:
+                        logger.debug(f"📡 StateMachine risk_alert transition error: {_sm_err}")
+
+                def _on_drift_detected(msg):
+                    logger.info(f"📡 MessageBus DRIFT_DETECTED: {msg}")
+                    try:
+                        if hasattr(evolution_engine, "_drift_detector") and evolution_engine._drift_detector is not None:
+                            logger.info("📡 Concept drift detected — flagging for re-train on next tick")
+                            evolution_engine._last_drift_retrain = 0.0  # force re-train on next tick
+                    except Exception as _drift_err:
+                        logger.debug(f"📡 Drift handler error: {_drift_err}")
+
+                msg_bus.subscribe(TOPIC_RISK_ALERT, _on_risk_alert)
+                msg_bus.subscribe(TOPIC_DRIFT_DETECTED, _on_drift_detected)
+                logger.info("📡 MessageBus: subscribers registered (RISK_ALERT, DRIFT_DETECTED)")
+            except Exception as _bus_err:
+                logger.warning(f"📡 MessageBus subscriber registration error: {_bus_err}")
 
         logger.info("🧬 Evolution Engine started")
         logger.info("   - Loop #1 (MetaAgent → Fusion): ON")
