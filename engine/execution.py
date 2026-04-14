@@ -213,7 +213,8 @@ class ExecutionEngine:
             from risk_institutional.regulatory_limits import check_position_limits
             notional = entry_price * size
             current_regime = "ranging"  # fallback; ideally pass regime from caller
-            pos_dict = {"notional": notional, "leverage": 10.0, "symbol": symbol}
+            lev = float(LEVERAGE)
+            pos_dict = {"notional": notional, "leverage": lev, "symbol": symbol}
             reg_check = check_position_limits(pos_dict, self._balance, regime=current_regime)
             if not reg_check["allowed"]:
                 logger.warning(
@@ -225,11 +226,12 @@ class ExecutionEngine:
 
         try:
             from risk_institutional.margin_monitor import MarginMonitor
-            _mm = MarginMonitor(leverage=10.0)
+            lev = float(LEVERAGE)
+            _mm = MarginMonitor(leverage=lev)
             with self._lock:
                 _open_positions_snapshot = list(self._open_positions.values())
             open_pos_list = [
-                {"notional": abs(p.entry_price * p.size), "margin": abs(p.entry_price * p.size) / 10.0}
+                {"notional": abs(p.entry_price * p.size), "margin": abs(p.entry_price * p.size) / max(lev, 1e-8)}
                 for p in _open_positions_snapshot
             ]
             margin_status = _mm.compute_margin_usage(open_pos_list, self._balance)

@@ -450,7 +450,7 @@ class EvolutionEngine:
             # Loop #8: PPO experience collection
             try:
                 if self._ppo is not None:
-                    symbol = str(getattr(closed_position, "symbol", ""))
+                    symbol = str(getattr(closed_position, "symbol", "") or "UNKNOWN")
                     from config.settings import RL_N_FEATURES  # state vector dimension = 12
                     # Build a simple state vector (RL_N_FEATURES features)
                     state = np.zeros(RL_N_FEATURES)
@@ -485,7 +485,7 @@ class EvolutionEngine:
                             self._ppo.train_step([
                                 {
                                     "symbol": e.get("symbol", ""),
-                                    "reward": e.get("trade_reward", 1.0 if e.get("pnl", 0.0) > 0 else -1.0),
+                                    "reward": e.get("trade_reward", -1.0),
                                     "pnl": e.get("pnl", 0.0),
                                 }
                                 for e in self._ppo_experience_buffer[-10:]
@@ -503,8 +503,6 @@ class EvolutionEngine:
             return 1.0
         try:
             from config.settings import RL_SIZE_MULT_MIN, RL_SIZE_MULT_MAX
-            close = float(df["close"].iloc[-1])
-            _ = close  # keep explicit close extraction for compatibility/debug parity
             closes = df["close"].values[-11:]
             if len(closes) < 11:
                 return 1.0

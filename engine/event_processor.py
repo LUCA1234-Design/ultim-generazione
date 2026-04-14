@@ -520,7 +520,7 @@ class EventProcessor:
         strategy_name = strategy_result.metadata.get("strategy", "") if strategy_result else ""
 
         # RL size hint from PPO (if EvolutionEngine is wired)
-        if getattr(_cfg, "RL_SIZE_HINT_ENABLED", True) and hasattr(self, "_evolution_engine") and self._evolution_engine is not None:
+        if getattr(_cfg, "RL_SIZE_HINT_ENABLED", True) and self._evolution_engine is not None:
             try:
                 rl_mult = self._evolution_engine.get_rl_size_hint(symbol, interval, df, fusion_result.decision)
                 size = size * rl_mult
