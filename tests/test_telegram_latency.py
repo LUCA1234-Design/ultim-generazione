@@ -12,6 +12,7 @@ def test_heartbeat_message_includes_latency():
         risk_blocked=False,
         skip_reasons={},
         latency_info={
+            "samples_rtt": 10,
             "mean_rtt_ms": 45.0,
             "p95_rtt_ms": 78.0,
             "ws_delay_mean_ms": 23.0,

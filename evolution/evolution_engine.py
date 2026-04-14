@@ -187,13 +187,18 @@ class EvolutionEngine:
                 pass
         if self._ppo is not None:
             try:
-                pretrained_path = "models/ppo_pretrained.pt"
+                from config.settings import RL_PRETRAIN_MODEL_PATH
+                pretrained_path = RL_PRETRAIN_MODEL_PATH
                 if os.path.exists(pretrained_path):
                     loaded = self._ppo.load_pretrained(pretrained_path)
                     if loaded:
-                        logger.info("🎓 PPO: loaded pretrained model from offline training")
-            except Exception:
-                pass
+                        logger.info(f"🎓 PPO: loaded pretrained model from {pretrained_path}")
+                    else:
+                        logger.warning(f"⚠️ PPO: failed to load pretrained model from {pretrained_path}")
+                else:
+                    logger.debug(f"PPO pretrained model not found at {pretrained_path} — using random init")
+            except Exception as exc:
+                logger.debug(f"PPO pretrained load error: {exc}")
 
         # Loop #10: Bayesian engine
         self._bayesian = bayesian_engine

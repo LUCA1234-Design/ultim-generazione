@@ -236,7 +236,7 @@ def build_heartbeat_message(uptime_hours: int, uptime_minutes: int,
     ]
     if training_status:
         lines.append(f"{training_status}")
-    if latency_info:
+    if latency_info and latency_info.get("samples_rtt", 0) > 0:
         lines.append(
             "🌐 Latency: RTT={:.0f}ms (p95={:.0f}ms) | WS delay={:.0f}ms".format(
                 float(latency_info.get("mean_rtt_ms", 0.0)),

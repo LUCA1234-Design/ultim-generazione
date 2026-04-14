@@ -108,7 +108,7 @@ from services.notification_worker import (
     enqueue_signal_notification,
 )
 try:
-    from services.latency_monitor import get_latency_report, start_latency_monitor
+    from services.latency_monitor import get_latency_report
     _LATENCY_MONITOR_AVAILABLE = True
 except ImportError:
     _LATENCY_MONITOR_AVAILABLE = False
@@ -568,7 +568,10 @@ def _heartbeat_loop(processor: EventProcessor, interval_sec: int) -> None:
                 training_status = "🎯 Sniper Mode attivo"
             else:
                 training_status = f"📚 Trade: {completed_trades}/{TRAINING_TARGET_TRADES} → Training Mode"
-            latency_info = get_latency_report() if _LATENCY_MONITOR_AVAILABLE else None
+            try:
+                latency_info = get_latency_report() if _LATENCY_MONITOR_AVAILABLE else None
+            except Exception:
+                latency_info = None
 
             msg = build_heartbeat_message(
                 uptime_hours=hours,
@@ -671,8 +674,6 @@ def main():
 
         # ---- Binance client (initialise early to validate credentials) ----
         _ = get_client()
-        if _LATENCY_MONITOR_AVAILABLE:
-            start_latency_monitor()
 
         # ---- Load symbol universes ----
         load_universes()
@@ -680,15 +681,24 @@ def main():
         if not symbols_whitelist:
             raise ValueError("❌ No symbols loaded for scanning!")
 
-        # Start L2 order book streams for top symbols
-        if ORDERBOOK_STREAM_ENABLED:
-            try:
-                from data.orderbook_stream import start_orderbook_streams
+        # --- Step 1: Start L2 Order Book streams for top symbols ---
+        try:
+            from data.orderbook_stream import start_orderbook_streams
+            from config.settings import ORDERBOOK_STREAM_ENABLED, ORDERBOOK_MAX_SYMBOLS
+            if ORDERBOOK_STREAM_ENABLED:
                 ob_symbols = symbols_whitelist[:ORDERBOOK_MAX_SYMBOLS]
-                start_orderbook_streams(ob_symbols)
-                logger.info(f"📡 L2 OrderBook streams started for {len(ob_symbols)} symbols")
-            except Exception as e:
-                logger.warning(f"OrderBook streams unavailable: {e}")
+                if ob_symbols:
+                    start_orderbook_streams(ob_symbols)
+                    logger.info(f"📡 L2 OrderBook streams started for {len(ob_symbols)} symbols")
+        except Exception as e:
+            logger.warning(f"⚠️ OrderBook streams unavailable: {e}")
+
+        # --- Step 3: Start Latency Monitor ---
+        try:
+            from services.latency_monitor import start_latency_monitor
+            start_latency_monitor()
+        except Exception as e:
+            logger.warning(f"⚠️ Latency monitor unavailable: {e}")
 
         # ---- Preload historical data ----
         logger.info(f"📥 Preloading history for {len(symbols_whitelist)} symbols (main list)...")
