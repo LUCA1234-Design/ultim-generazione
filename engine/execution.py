@@ -208,6 +208,40 @@ class ExecutionEngine:
             paper=self.paper_trading,
         )
 
+        # ---- Institutional risk checks ----
+        try:
+            from risk_institutional.regulatory_limits import check_position_limits
+            notional = entry_price * size
+            current_regime = "ranging"  # fallback; ideally pass regime from caller
+            pos_dict = {"notional": notional, "leverage": 10.0, "symbol": symbol}
+            reg_check = check_position_limits(pos_dict, self._balance, regime=current_regime)
+            if not reg_check["allowed"]:
+                logger.warning(
+                    f"⚖️ [RegulatoryLimits] Position blocked for {symbol}: {reg_check['violations']}"
+                )
+                return None
+        except Exception as _reg_err:
+            logger.debug(f"⚖️ RegulatoryLimits check skipped: {_reg_err}")
+
+        try:
+            from risk_institutional.margin_monitor import MarginMonitor
+            _mm = MarginMonitor(leverage=10.0)
+            with self._lock:
+                _open_positions_snapshot = list(self._open_positions.values())
+            open_pos_list = [
+                {"notional": abs(p.entry_price * p.size), "margin": abs(p.entry_price * p.size) / 10.0}
+                for p in _open_positions_snapshot
+            ]
+            margin_status = _mm.compute_margin_usage(open_pos_list, self._balance)
+            if not margin_status.get("can_open_new", True):
+                logger.warning(
+                    f"⚖️ [MarginMonitor] Margin utilisation {margin_status.get('utilisation_pct', 0):.1%} "
+                    f"— blocking new position for {symbol} (status={margin_status.get('status')})"
+                )
+                return None
+        except Exception as _mm_err:
+            logger.debug(f"⚖️ MarginMonitor check skipped: {_mm_err}")
+
         with self._lock:
             if self.paper_trading:
                 self._open_positions[pos_id] = pos

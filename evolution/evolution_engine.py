@@ -142,6 +142,7 @@ class EvolutionEngine:
         confluence_agent,
         tracker,
         pattern_agent=None,
+        regime_agent=None,
         # V18 optional components
         hmm_model=None,
         ppo_agent=None,
@@ -154,6 +155,9 @@ class EvolutionEngine:
         self._risk = risk_agent
         self._tracker = tracker
         self._pattern = pattern_agent
+        self._regime_agent = regime_agent
+        if self._regime_agent is None and self._pattern is not None:
+            self._regime_agent = getattr(self._pattern, "_regime_agent", None)
 
         # Sub-engines for loop #5 and #7
         self._strategy_evolver = StrategyEvolver(strategy_agent)
@@ -446,6 +450,7 @@ class EvolutionEngine:
             # Loop #8: PPO experience collection
             try:
                 if self._ppo is not None:
+                    symbol = str(getattr(closed_position, "symbol", ""))
                     from config.settings import RL_N_FEATURES  # state vector dimension = 12
                     # Build a simple state vector (RL_N_FEATURES features)
                     state = np.zeros(RL_N_FEATURES)
@@ -460,8 +465,12 @@ class EvolutionEngine:
                     reward = float(np.clip(pnl_value / 10.0, -1.0, 1.0))  # normalised reward
                     done = 1.0   # each trade is a terminal episode step
                     value = self._ppo.get_value(state)
+                    trade_reward = 1.0 if was_profitable else -1.0
 
                     self._ppo_experience_buffer.append({
+                        "symbol": symbol,
+                        "trade_reward": trade_reward,
+                        "pnl": pnl_value,
                         "state": state,
                         "action": action,
                         "log_prob": log_prob,
@@ -470,11 +479,58 @@ class EvolutionEngine:
                         "done": done,
                         "next_state": state.copy(),
                     })
-                    # Keep last 1000 experiences (sufficient for ~20 PPO batches of 50)
-                    if len(self._ppo_experience_buffer) > 1000:
-                        self._ppo_experience_buffer = self._ppo_experience_buffer[-1000:]
+                    # Loop #8: PPO experience update
+                    if len(self._ppo_experience_buffer) >= 10:
+                        if hasattr(self._ppo, "train_step"):
+                            self._ppo.train_step([
+                                {
+                                    "symbol": e.get("symbol", ""),
+                                    "reward": e.get("trade_reward", 1.0 if e.get("pnl", 0.0) > 0 else -1.0),
+                                    "pnl": e.get("pnl", 0.0),
+                                }
+                                for e in self._ppo_experience_buffer[-10:]
+                            ])
+                        self._ppo_experience_buffer = self._ppo_experience_buffer[-50:]
             except Exception as exc:
                 logger.debug(f"Loop#8 RL experience error: {exc}")
+
+    def get_rl_size_hint(self, symbol: str, interval: str, df, direction: str) -> float:
+        """
+        Returns a size multiplier [0.5, 1.5] suggested by the PPO agent.
+        Falls back to 1.0 if PPO is not available or fails.
+        """
+        if self._ppo is None:
+            return 1.0
+        try:
+            from config.settings import RL_SIZE_MULT_MIN, RL_SIZE_MULT_MAX
+            close = float(df["close"].iloc[-1])
+            _ = close  # keep explicit close extraction for compatibility/debug parity
+            closes = df["close"].values[-11:]
+            if len(closes) < 11:
+                return 1.0
+            returns = np.diff(closes) / closes[:-1]
+            direction_enc = 1.0 if direction == "long" else -1.0
+            state = np.append(returns[-9:], direction_enc).astype(np.float32)
+            if hasattr(self._ppo, "act"):
+                action = self._ppo.act(state)
+            elif hasattr(self._ppo, "suggest"):
+                action = self._ppo.suggest(state)
+            elif hasattr(self._ppo, "best_action"):
+                action = self._ppo.best_action(state)
+            elif hasattr(self._ppo, "select_action"):
+                action, _ = self._ppo.select_action(state)
+            else:
+                return 1.0
+            size_map = {0: 0.6, 1: 1.0, 2: 1.4}
+            multiplier = float(size_map.get(int(action), 1.0))
+            multiplier = float(np.clip(multiplier, RL_SIZE_MULT_MIN, RL_SIZE_MULT_MAX))
+            logger.debug(
+                f"🎓 PPO size hint [{symbol}/{interval} {direction}]: action={action} → {multiplier:.1f}x"
+            )
+            return multiplier
+        except Exception as _e:
+            logger.debug(f"🎓 PPO size hint error: {_e}")
+            return 1.0
 
     def tick(self) -> None:
         """Periodic evolution step — call every ~30 minutes from main loop.
@@ -542,6 +598,46 @@ class EvolutionEngine:
                             logger.info("🔮 HMM re-fitted on updated BTCUSDT data")
                 except Exception as exc:
                     logger.debug(f"HMM re-fit error: {exc}")
+
+            # Loop #9: HMM second opinion → RegimeAgent
+            if self._hmm is not None and self._regime_agent is not None:
+                try:
+                    hmm_regime = None
+                    if hasattr(self._hmm, "current_regime"):
+                        hmm_regime = self._hmm.current_regime()
+                    elif hasattr(self._hmm, "get_regime"):
+                        hmm_regime = self._hmm.get_regime()
+                    elif hasattr(self._hmm, "predict_regime"):
+                        from data import data_store
+                        _df_btc = data_store.get_df("BTCUSDT", "1h")
+                        if _df_btc is not None and len(_df_btc) >= 50:
+                            hmm_regime = self._hmm.predict_regime(_df_btc)
+                    if hmm_regime and hasattr(self._regime_agent, "set_hmm_prior"):
+                        self._regime_agent.set_hmm_prior(hmm_regime)
+                        logger.debug(f"🔎 HMM regime prior → RegimeAgent: {hmm_regime}")
+                except Exception as _hmm_err:
+                    logger.debug(f"🔎 HMM→RegimeAgent propagation error: {_hmm_err}")
+
+            # Loop #10: Bayesian win rate → RiskAgent
+            if self._bayesian is not None and self._risk is not None:
+                try:
+                    global_wr = None
+                    if hasattr(self._bayesian, "get_win_rate"):
+                        global_wr = self._bayesian.get_win_rate()
+                    elif hasattr(self._bayesian, "get_posterior"):
+                        posterior = self._bayesian.get_posterior() or {}
+                        wr_obj = posterior.get("win_rate")
+                        if isinstance(wr_obj, dict):
+                            global_wr = wr_obj.get("mean")
+                        if global_wr is None:
+                            global_wr = posterior.get("win_rate_bayes")
+                    if global_wr is not None:
+                        global_wr = float(global_wr)
+                    if global_wr is not None and 0.0 < global_wr < 1.0:
+                        self._risk.set_win_rate("global", global_wr)
+                        logger.debug(f"⚖️ Bayesian global win rate → RiskAgent: {global_wr:.3f}")
+                except Exception as _bay_err:
+                    logger.debug(f"⚖️ Bayesian→RiskAgent propagation error: {_bay_err}")
 
             # ---- V18 periodic loops (every 5 min) -------------------------
             if now - self._last_v18_tick >= _V18_TICK_INTERVAL_SEC:

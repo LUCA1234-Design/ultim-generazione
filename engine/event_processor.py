@@ -45,6 +45,7 @@ class EventProcessor:
         correlation_agent=None,
         contrarian_agent=None,
         kill_switch=None,
+        supervisor=None,
     ):
         self.pattern = pattern_agent
         self.regime = regime_agent
@@ -62,6 +63,8 @@ class EventProcessor:
         self.correlation_agent = correlation_agent
         self.contrarian_agent = contrarian_agent
         self.kill_switch = kill_switch
+        self.supervisor = supervisor
+        self._evolution_engine = None
 
         self._last_signal_time: Dict[str, float] = {}
         self._processed_count = 0
@@ -338,9 +341,26 @@ class EventProcessor:
         # ---- Run agents ----
         agent_results: Dict[str, AgentResult] = {}
 
+        def _run_agent(agent_name: str, fn, *args, **kwargs):
+            _t0 = time.monotonic()
+            _error = False
+            try:
+                return fn(*args, **kwargs)
+            except Exception as _e:
+                _error = True
+                logger.debug(f"🔎 {agent_name}_agent exception: {_e}")
+                return None
+            finally:
+                _latency_ms = (time.monotonic() - _t0) * 1000.0
+                if self.supervisor is not None:
+                    try:
+                        self.supervisor.report_health(agent_name, _latency_ms, _error)
+                    except Exception:
+                        pass
+
         # Pattern agent (provides initial direction hint)
         df_btc = data_store.get_df("BTCUSDT", interval)
-        pattern_result = self.pattern.safe_analyse(symbol, interval, df, df_btc)
+        pattern_result = _run_agent("pattern", self.pattern.safe_analyse, symbol, interval, df, df_btc)
         if pattern_result is not None:
             agent_results["pattern"] = pattern_result
             direction_hint = pattern_result.direction
@@ -348,7 +368,7 @@ class EventProcessor:
             direction_hint = "neutral"
 
         # Regime agent
-        regime_result = self.regime.safe_analyse(symbol, interval, df)
+        regime_result = _run_agent("regime", self.regime.safe_analyse, symbol, interval, df)
         current_regime = "unknown"
         if regime_result is not None:
             agent_results["regime"] = regime_result
@@ -377,7 +397,7 @@ class EventProcessor:
                 return None
 
         # Confluence agent
-        confluence_result = self.confluence.safe_analyse(symbol, interval, df, direction_hint)
+        confluence_result = _run_agent("confluence", self.confluence.safe_analyse, symbol, interval, df, direction_hint)
         if confluence_result is not None:
             agent_results["confluence"] = confluence_result
             # ---- SNIPER: Require at least 2/3 TFs agreeing ----
@@ -391,24 +411,24 @@ class EventProcessor:
                 return None
 
         # Risk agent
-        risk_result = self.risk.safe_analyse(symbol, interval, df, direction_hint, regime=current_regime)
+        risk_result = _run_agent("risk", self.risk.safe_analyse, symbol, interval, df, direction_hint, regime=current_regime)
         if risk_result is not None:
             agent_results["risk"] = risk_result
 
         # Strategy agent
-        strategy_result = self.strategy.safe_analyse(symbol, interval, df, direction_hint)
+        strategy_result = _run_agent("strategy", self.strategy.safe_analyse, symbol, interval, df, direction_hint)
         if strategy_result is not None:
             agent_results["strategy"] = strategy_result
 
         # Meta agent
-        meta_result = self.meta.safe_analyse(symbol, interval, df, agent_results)
+        meta_result = _run_agent("meta", self.meta.safe_analyse, symbol, interval, df, agent_results)
         if meta_result is not None:
             agent_results["meta"] = meta_result
 
         # ---- V18 agents (graceful degradation) ----
         if self.orderflow_agent is not None:
             try:
-                of_result = self.orderflow_agent.safe_analyse(symbol, interval, df)
+                of_result = _run_agent("orderflow", self.orderflow_agent.safe_analyse, symbol, interval, df)
                 if of_result is not None:
                     agent_results["orderflow"] = of_result
             except Exception as e:
@@ -416,7 +436,7 @@ class EventProcessor:
 
         if self.sentiment_agent is not None:
             try:
-                sent_result = self.sentiment_agent.safe_analyse(symbol, interval, df)
+                sent_result = _run_agent("sentiment", self.sentiment_agent.safe_analyse, symbol, interval, df)
                 if sent_result is not None:
                     agent_results["sentiment"] = sent_result
             except Exception as e:
@@ -424,7 +444,7 @@ class EventProcessor:
 
         if self.correlation_agent is not None:
             try:
-                corr_result = self.correlation_agent.safe_analyse(symbol, interval, df, df_btc)
+                corr_result = _run_agent("correlation", self.correlation_agent.safe_analyse, symbol, interval, df, df_btc)
                 if corr_result is not None:
                     agent_results["correlation"] = corr_result
             except Exception as e:
@@ -433,7 +453,9 @@ class EventProcessor:
         # Contrarian agent runs LAST — it needs to see consensus direction
         if self.contrarian_agent is not None:
             try:
-                contr_result = self.contrarian_agent.safe_analyse(
+                contr_result = _run_agent(
+                    "contrarian",
+                    self.contrarian_agent.safe_analyse,
                     symbol, interval, df,
                     consensus_direction=direction_hint,
                     agent_results=agent_results,
@@ -496,6 +518,15 @@ class EventProcessor:
         size = risk_meta.get("size", 0.001)
         entry = risk_meta.get("entry", float(df["close"].iloc[-1]))
         strategy_name = strategy_result.metadata.get("strategy", "") if strategy_result else ""
+
+        # RL size hint from PPO (if EvolutionEngine is wired)
+        if getattr(_cfg, "RL_SIZE_HINT_ENABLED", True) and hasattr(self, "_evolution_engine") and self._evolution_engine is not None:
+            try:
+                rl_mult = self._evolution_engine.get_rl_size_hint(symbol, interval, df, fusion_result.decision)
+                size = size * rl_mult
+                logger.debug(f"🎓 PPO size multiplier [{symbol}]: {rl_mult:.2f}x → size={size:.6f}")
+            except Exception as _rl_err:
+                logger.debug(f"🎓 PPO size hint skipped: {_rl_err}")
 
         try:
             risk = abs(entry - sl)
