@@ -246,6 +246,7 @@ class EvolutionEngine:
                 self._hyperopt = _HyperoptEngine()
             except Exception:
                 pass
+        self._last_hyperopt_params: Optional[dict] = None
 
         # Closed trades buffer for backtest validation (Loop #15)
         self._closed_trades_buffer: list = []
@@ -440,6 +441,9 @@ class EvolutionEngine:
                     "win": was_profitable,
                     "strategy": getattr(closed_position, "strategy", None),
                     "regime": ctx.get("regime", "unknown"),
+                    "symbol": getattr(closed_position, "symbol", ""),
+                    "interval": getattr(closed_position, "interval", ""),
+                    "direction": getattr(closed_position, "direction", ""),
                 })
                 # Keep last 500 trades
                 if len(self._closed_trades_buffer) > 500:
@@ -452,12 +456,32 @@ class EvolutionEngine:
                 if self._ppo is not None:
                     symbol = str(getattr(closed_position, "symbol", "") or "UNKNOWN")
                     from config.settings import RL_N_FEATURES  # state vector dimension = 12
-                    # Build a simple state vector (RL_N_FEATURES features)
                     state = np.zeros(RL_N_FEATURES)
-                    state[0] = float(np.clip(pnl_value / 100.0, -1.0, 1.0))  # normalised pnl
-                    state[1] = 1.0 if was_profitable else 0.0                  # win flag
+                    state[0] = float(np.clip(pnl_value / 100.0, -1.0, 1.0))
+                    state[1] = 1.0 if was_profitable else 0.0
                     n_closed = len(self._closed_trades_buffer)
-                    state[2] = float(np.clip(n_closed / 200.0, 0.0, 1.0))     # experience level
+                    state[2] = float(np.clip(n_closed / 200.0, 0.0, 1.0))
+                    state[3] = float(np.clip(ctx.get("fusion_score", 0.5), 0.0, 1.0))
+                    regime = ctx.get("regime", "unknown")
+                    state[4] = 1.0 if regime == "trending" else 0.0
+                    state[5] = 1.0 if regime == "ranging" else 0.0
+                    state[6] = 1.0 if regime == "volatile" else 0.0
+                    direction = str(getattr(closed_position, "direction", "") or "")
+                    state[7] = 1.0 if direction == "long" else (-1.0 if direction == "short" else 0.0)
+                    agent_dirs = ctx.get("agent_directions", {})
+                    if agent_dirs:
+                        agree = sum(1 for d in agent_dirs.values() if d == direction)
+                        state[8] = float(agree) / float(len(agent_dirs))
+                    agent_scores_ctx = ctx.get("agent_scores", {})
+                    if agent_scores_ctx:
+                        state[9] = float(np.clip(np.mean(list(agent_scores_ctx.values())), 0.0, 1.0))
+                    open_time = float(getattr(closed_position, "open_time", 0.0) or 0.0)
+                    close_time = float(getattr(closed_position, "close_time", 0.0) or 0.0)
+                    hold_sec = max(close_time - open_time, 0.0)
+                    state[10] = float(np.clip(hold_sec / 86400.0, 0.0, 1.0))
+                    if self._closed_trades_buffer:
+                        wins = sum(1 for t in self._closed_trades_buffer if t.get("win"))
+                        state[11] = float(wins) / float(len(self._closed_trades_buffer))
 
                     # Use PPO policy to select actual action and get real log_prob
                     # PPO actions: 0=hold, 1-3=short(small/med/large), 4-7=long(small/med/large)
@@ -965,6 +989,23 @@ class EvolutionEngine:
 
             self._fusion._threshold = new_threshold
             experience_db.save_param("fusion_threshold", new_threshold, "auto_tune")
+            if self._hyperopt is not None:
+                try:
+                    if self._closed_trades_buffer:
+                        recent50 = self._closed_trades_buffer[-50:]
+                        hyp_score = sum(1 for t in recent50 if t.get("win")) / len(recent50)
+                    else:
+                        hyp_score = 0.5
+                    if self._last_hyperopt_params:
+                        self._hyperopt.report_result(self._last_hyperopt_params, hyp_score)
+                    suggested = self._hyperopt.suggest_params()
+                    self._last_hyperopt_params = suggested
+                    if suggested and "fusion_threshold" in suggested:
+                        new_thr = float(np.clip(suggested["fusion_threshold"], _THRESHOLD_MIN, _THRESHOLD_MAX))
+                        self._fusion._threshold = new_thr
+                        logger.info(f"Loop#11 Hyperopt: fusion_threshold -> {new_thr:.3f} (score={hyp_score:.2f})")
+                except Exception as exc:
+                    logger.debug(f"Loop#11 _auto_tune_params hyperopt error: {exc}")
         except Exception as exc:
             logger.error(f"_auto_tune_params error: {exc}")
 
