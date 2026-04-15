@@ -24,6 +24,7 @@ logger = logging.getLogger("EventProcessor")
 # Candle momentum filter thresholds
 _VOLUME_THRESHOLD_RATIO = 0.70      # skip if volume < this fraction of recent average
 _MIN_EMA_SLOPE_THRESHOLD = 0.0002   # skip if absolute EMA slope is below this (flat market)
+_MAX_DECISION_CONTEXTS = 500
 
 class EventProcessor:
     """Routes candle close events through the full agent pipeline."""
@@ -507,9 +508,9 @@ class EventProcessor:
             _close = float(df["close"].iloc[-1])
             risk_meta = {
                 "entry": _close,
-                "sl": _close - 2.0 * _atr_val if fusion_result.decision == "long" else _close + 2.0 * _atr_val,
-                "tp1": _close + 2.0 * _atr_val if fusion_result.decision == "long" else _close - 2.0 * _atr_val,
-                "tp2": _close + 4.0 * _atr_val if fusion_result.decision == "long" else _close - 4.0 * _atr_val,
+                "sl": _close - 1.5 * _atr_val if fusion_result.decision == "long" else _close + 1.5 * _atr_val,
+                "tp1": _close + 2.5 * _atr_val if fusion_result.decision == "long" else _close - 2.5 * _atr_val,
+                "tp2": _close + 5.0 * _atr_val if fusion_result.decision == "long" else _close - 5.0 * _atr_val,
                 "size": 0.001,
             }
         sl = risk_meta.get("sl", df["close"].iloc[-1] * 0.99)
@@ -588,6 +589,11 @@ class EventProcessor:
 
             # Store decision context so the evolution engine can access it later
             try:
+                if len(self._decision_contexts) >= _MAX_DECISION_CONTEXTS:
+                    oldest_keys = list(self._decision_contexts.keys())[:50]
+                    for _k in oldest_keys:
+                        self._decision_contexts.pop(_k, None)
+                    logger.debug(f"Pruned 50 stale decision contexts (cache was >={_MAX_DECISION_CONTEXTS})")
                 self._decision_contexts[fusion_result.decision_id] = {
                     "symbol": symbol,
                     "interval": interval,

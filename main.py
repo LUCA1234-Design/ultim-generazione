@@ -457,7 +457,12 @@ def _position_monitor(
                         pattern_tags = ""
                         pattern_ctx = ctx.get("agent_results", {}).get("pattern")
                         if pattern_ctx and hasattr(pattern_ctx, "details"):
-                            pattern_tags = ",".join(str(d) for d in list(pattern_ctx.details)[:10])
+                            clean_tags = [
+                                str(d).split("(")[0].strip()
+                                for d in list(pattern_ctx.details)[:10]
+                                if d
+                            ]
+                            pattern_tags = ",".join(clean_tags)
 
                         for agent_name, score in agent_scores.items():
                             experience_db.save_agent_outcome(
@@ -471,16 +476,9 @@ def _position_monitor(
                     except Exception as e:
                         logger.error(f"save_agent_outcome error: {e}")
 
-                    # Update StrategyAgent with trade outcome (Fix 4)
-                    try:
-                        strategy_name = closed.strategy
-                        if strategy_name:
-                            processor.strategy.update_strategy_outcome(
-                                strategy_name,
-                                was_profitable=(closed.pnl or 0) > 0,
-                            )
-                    except Exception as e:
-                        logger.error(f"update_strategy_outcome error: {e}")
+                    # NOTE: strategy outcome is forwarded via evolution_engine.on_trade_close()
+                    # -> StrategyEvolver.record_trade() -> strategy.update_strategy_outcome().
+                    # Do NOT call update_strategy_outcome() here directly (would double-count).
 
                     # Record outcome in MetaAgent for weight adjustment (Fix 8)
                     try:
