@@ -16,6 +16,7 @@ import numpy as np
 from config.settings import (
     PAPER_TRADING,
     ACCOUNT_BALANCE,
+    TRAINING_MODE,
     LEVERAGE,
     MAX_DAILY_LOSS_USDT,
     MAX_DAILY_LOSS_PCT,
@@ -165,6 +166,17 @@ class ExecutionEngine:
             "weekly_loss_pct": weekly_loss_pct,
             "weekly_loss_pct_max": MAX_WEEKLY_LOSS_PCT,
         }
+
+        if TRAINING_MODE:
+            if (
+                daily_loss_usdt >= MAX_DAILY_LOSS_USDT
+                or daily_loss_pct >= MAX_DAILY_LOSS_PCT
+                or self._consecutive_losses >= MAX_CONSECUTIVE_LOSSES
+                or total_drawdown_pct >= MAX_TOTAL_DRAWDOWN_PCT
+                or weekly_loss_pct >= MAX_WEEKLY_LOSS_PCT
+            ):
+                logger.debug(f"[TRAINING] Risk limit reached but not blocking: {details}")
+            return False, "", details
 
         if daily_loss_usdt >= MAX_DAILY_LOSS_USDT:
             return True, "max_daily_loss_usdt", details

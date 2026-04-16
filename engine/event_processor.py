@@ -14,10 +14,11 @@ from agents.confluence_agent import ConfluenceAgent
 from agents.risk_agent import RiskAgent
 from agents.strategy_agent import StrategyAgent
 from agents.meta_agent import MetaAgent
-from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, _SNIPER_MIN_AGREEING_TIMEFRAMES
+from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, SNIPER_MIN_AGREEING_TIMEFRAMES
 from engine.execution import ExecutionEngine
 from data import data_store
 import config.settings as _cfg
+from config.settings import TRAINING_MODE, TRAINING_POSITION_TIMEOUT_MINUTES
 
 logger = logging.getLogger("EventProcessor")
 
@@ -211,6 +212,34 @@ class EventProcessor:
 
         return float(np.mean(correlations)) if correlations else 0.0
 
+    def _close_timed_out_positions(self) -> None:
+        """In TRAINING_MODE: close positions automatically after timeout."""
+        if not TRAINING_MODE:
+            return
+        timeout_secs = TRAINING_POSITION_TIMEOUT_MINUTES * 60
+        now = time.time()
+        for pos in self.execution.get_open_positions():
+            age = now - getattr(pos, "open_time", now)
+            if age <= timeout_secs:
+                continue
+            try:
+                df = data_store.get_df(pos.symbol, pos.interval)
+                if df is not None and len(df) > 0:
+                    current_price = float(df["close"].iloc[-1])
+                else:
+                    current_price = float(pos.entry_price)
+            except Exception:
+                current_price = float(pos.entry_price)
+
+            logger.warning(
+                f"⏰ TRAINING TIMEOUT [{pos.position_id}] {pos.symbol} "
+                f"open for {age/60:.1f}min > {TRAINING_POSITION_TIMEOUT_MINUTES}min — force closing @ {current_price:.4f}"
+            )
+            try:
+                self.execution.close_position(pos.position_id, current_price, reason="training_timeout")
+            except Exception as e:
+                logger.debug(f"training_timeout close error [{getattr(pos, 'position_id', '?')}]: {e}")
+
     # ------------------------------------------------------------------
     # Main event handler
     # ------------------------------------------------------------------
@@ -220,6 +249,7 @@ class EventProcessor:
 
         Returns FusionResult if a trade signal is generated, else None.
         """
+        self._close_timed_out_positions()
         self._processed_count += 1
 
         # Log skip stats every 100 candles processed
@@ -302,42 +332,48 @@ class EventProcessor:
 
         # Guard: correlation with existing positions
         avg_correlation = self._correlation_check(symbol, interval)
-        if avg_correlation > 0.80:
+        corr_threshold = 0.95 if TRAINING_MODE else 0.80
+        if avg_correlation > corr_threshold:
             self._skip("high_correlation")
-            logger.info(f"⛔ {symbol}/{interval} SKIP: high_correlation={avg_correlation:.2f}")
+            logger.info(
+                f"⛔ {symbol}/{interval} SKIP: high_correlation={avg_correlation:.2f} "
+                f"(threshold={corr_threshold:.2f})"
+            )
             return None
 
         # === FILTRO MOMENTUM CANDELA (CECCHINO) ===
-        try:
-            if "volume" in df.columns and len(df) >= 21:
-                vol_avg = float(df["volume"].iloc[-21:-1].mean())
-                vol_current = float(df["volume"].iloc[-1])
-                # Candela con volume sotto il 70% della media → segnale debole
-                if vol_avg > 0 and vol_current < vol_avg * _VOLUME_THRESHOLD_RATIO:
-                    self._skip("low_volume_candle")
-                    logger.debug(
-                        f"⛔ {symbol}/{interval} SKIP: low_volume_candle "
-                        f"vol={vol_current:.0f} avg={vol_avg:.0f} ratio={vol_current/vol_avg:.2f}"
-                    )
-                    return None
-        except Exception as _vol_err:
-            logger.debug(f"volume_filter error: {_vol_err}")
+        if not TRAINING_MODE:
+            try:
+                if "volume" in df.columns and len(df) >= 21:
+                    vol_avg = float(df["volume"].iloc[-21:-1].mean())
+                    vol_current = float(df["volume"].iloc[-1])
+                    # Candela con volume sotto il 70% della media → segnale debole
+                    if vol_avg > 0 and vol_current < vol_avg * _VOLUME_THRESHOLD_RATIO:
+                        self._skip("low_volume_candle")
+                        logger.debug(
+                            f"⛔ {symbol}/{interval} SKIP: low_volume_candle "
+                            f"vol={vol_current:.0f} avg={vol_avg:.0f} ratio={vol_current/vol_avg:.2f}"
+                        )
+                        return None
+            except Exception as _vol_err:
+                logger.debug(f"volume_filter error: {_vol_err}")
 
         # Filtro EMA slope: richiedere che l'EMA 20 stia accelerando
-        try:
-            from indicators.technical import ema_slope as _ema_slope_fn
-            slope_series = _ema_slope_fn(df["close"], 20, 3)
-            if not slope_series.empty:
-                current_slope = float(slope_series.iloc[-1])
-                # Se slope è quasi zero (mercato piatto), skip
-                if abs(current_slope) < _MIN_EMA_SLOPE_THRESHOLD:
-                    self._skip("flat_ema_slope")
-                    logger.debug(
-                        f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={current_slope:.5f}"
-                    )
-                    return None
-        except Exception as _slope_err:
-            logger.debug(f"ema_slope_filter error: {_slope_err}")
+        if not TRAINING_MODE:
+            try:
+                from indicators.technical import ema_slope as _ema_slope_fn
+                slope_series = _ema_slope_fn(df["close"], 20, 3)
+                if not slope_series.empty:
+                    current_slope = float(slope_series.iloc[-1])
+                    # Se slope è quasi zero (mercato piatto), skip
+                    if abs(current_slope) < _MIN_EMA_SLOPE_THRESHOLD:
+                        self._skip("flat_ema_slope")
+                        logger.debug(
+                            f"⛔ {symbol}/{interval} SKIP: flat_ema_slope={current_slope:.5f}"
+                        )
+                        return None
+            except Exception as _slope_err:
+                logger.debug(f"ema_slope_filter error: {_slope_err}")
 
         # ---- Run agents ----
         agent_results: Dict[str, AgentResult] = {}
@@ -380,13 +416,12 @@ class EventProcessor:
 
         # === FILTRO REGIME VOLATILE POTENZIATO ===
         if current_regime == "volatile" and regime_result is not None:
-            # In regime volatile: richiedi almeno score >= 0.80
-            # oppure skippa direttamente se score del regime < 0.80
-            if regime_result.score < 0.80:
+            min_score = 0.50 if TRAINING_MODE else 0.80
+            if regime_result.score < min_score:
                 self._skip("unfavorable_regime")
                 logger.info(
                     f"⛔ {symbol}/{interval} SKIP: volatile_regime_strict "
-                    f"score={regime_result.score:.2f} < 0.80"
+                    f"score={regime_result.score:.2f} < {min_score:.2f}"
                 )
                 return None
             # Anche con score >= 0.80, richiedere conferma pattern
@@ -401,13 +436,14 @@ class EventProcessor:
         confluence_result = _run_agent("confluence", self.confluence.safe_analyse, symbol, interval, df, direction_hint)
         if confluence_result is not None:
             agent_results["confluence"] = confluence_result
-            # ---- SNIPER: Require at least 2/3 TFs agreeing ----
+            # ---- SNIPER: Require MTF confluence unless training ----
             agreeing_tfs = confluence_result.metadata.get("agreeing_tfs", 0) if confluence_result.metadata else 0
-            if agreeing_tfs < _SNIPER_MIN_AGREEING_TIMEFRAMES:
+            _min_tfs = 1 if TRAINING_MODE else SNIPER_MIN_AGREEING_TIMEFRAMES
+            if agreeing_tfs < _min_tfs:
                 self._skip("weak_confluence")
                 logger.info(
                     f"⛔ {symbol}/{interval} SKIP: weak_confluence "
-                    f"agreeing_tfs={agreeing_tfs}/3"
+                    f"agreeing_tfs={agreeing_tfs}/3 min={_min_tfs}"
                 )
                 return None
 
@@ -545,7 +581,7 @@ class EventProcessor:
             return None
 
         # High margin filter: skip signals with insufficient R/R when filter is active
-        if _cfg.HIGH_MARGIN_ONLY and rr < _cfg.HIGH_MARGIN_MIN_RR:
+        if _cfg.HIGH_MARGIN_ONLY and not TRAINING_MODE and rr < _cfg.HIGH_MARGIN_MIN_RR:
             self._skip("low_margin")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_margin | "
@@ -554,7 +590,11 @@ class EventProcessor:
             return None
 
         # Apply penalty for non-optimal trading hours: require a higher fusion score
-        if not self._is_optimal_hour() and fusion_result.final_score < _cfg.MIN_FUSION_SCORE + _cfg.NON_OPTIMAL_HOUR_PENALTY:
+        if (
+            not TRAINING_MODE
+            and not self._is_optimal_hour()
+            and fusion_result.final_score < _cfg.MIN_FUSION_SCORE + _cfg.NON_OPTIMAL_HOUR_PENALTY
+        ):
             self._skip("low_fusion_score")
             logger.info(
                 f"⛔ {symbol}/{interval} SKIP: low_fusion_score (non-optimal hour) | "

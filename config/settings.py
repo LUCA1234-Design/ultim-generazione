@@ -211,7 +211,7 @@ TRAINING_TARGET_TRADES = 200        # Completed trades required before switching
 # Training Mode overrides (lower thresholds to generate more signals)
 TRAINING_FUSION_THRESHOLD = 0.35
 TRAINING_MIN_FUSION_SCORE = 0.30
-TRAINING_MIN_AGENT_CONFIRMATIONS = 3
+TRAINING_MIN_AGENT_CONFIRMATIONS = 2
 TRAINING_MIN_RR = 1.20
 TRAINING_NON_OPTIMAL_HOUR_PENALTY = 0.02
 TRAINING_SIGNAL_COOLDOWN_BY_TF = {"15m": 600, "1h": 1800, "4h": 3600}
@@ -225,6 +225,7 @@ SNIPER_MIN_RR = 1.60
 SNIPER_NON_OPTIMAL_HOUR_PENALTY = 0.05
 SNIPER_SIGNAL_COOLDOWN_BY_TF = {"15m": 900, "1h": 3600, "4h": 7200}
 SNIPER_MAX_OPEN_POSITIONS = 3
+TRAINING_POSITION_TIMEOUT_MINUTES = 60
 
 # Apply training overrides automatically when TRAINING_MODE is active
 if TRAINING_MODE:
@@ -235,6 +236,7 @@ if TRAINING_MODE:
     NON_OPTIMAL_HOUR_PENALTY = TRAINING_NON_OPTIMAL_HOUR_PENALTY
     SIGNAL_COOLDOWN_BY_TF = TRAINING_SIGNAL_COOLDOWN_BY_TF
     MAX_OPEN_POSITIONS = TRAINING_MAX_OPEN_POSITIONS
+    SIGNAL_COOLDOWN = 60
 
 # ============================================================
 # HIGH MARGIN FILTER
@@ -246,6 +248,10 @@ HIGH_MARGIN_MIN_RR = 1.60            # R/R minimo per segnale "high margin" — 
                                      # con 2.5 TUTTI i segnali venivano bloccati in Training Mode.
 HIGH_MARGIN_MIN_FUSION_SCORE = 0.55  # Fusion score minimo per segnali high margin
 HIGH_MARGIN_BADGE = "🔥 HIGH MARGIN" # Badge da aggiungere ai messaggi
+
+if TRAINING_MODE:
+    HIGH_MARGIN_ONLY = False
+    HIGH_MARGIN_MIN_RR = MIN_RR
 
 # ============================================================
 # V18 — REINFORCEMENT LEARNING
