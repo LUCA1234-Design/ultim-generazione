@@ -5,9 +5,11 @@ import pandas as pd
 import pytest
 
 import engine.event_processor as event_processor_mod
+import engine.execution as execution_mod
 from agents.base_agent import AgentResult
 from config.settings import RL_N_FEATURES
 from engine.event_processor import EventProcessor
+from engine.execution import ExecutionEngine
 from evolution.evolution_engine import EvolutionEngine, _THRESHOLD_MAX
 
 
@@ -218,3 +220,73 @@ def test_evolution_engine_populates_full_state_buffer_and_hyperopt(monkeypatch):
     assert engine._hyperopt.reports
     assert engine._last_hyperopt_params == {"fusion_threshold": 0.88}
     assert engine._fusion._threshold == pytest.approx(min(0.88, _THRESHOLD_MAX))
+
+
+def test_event_processor_closes_timed_out_positions_in_training(monkeypatch):
+    class _DummyExecution:
+        def __init__(self, open_positions):
+            self._open_positions = open_positions
+            self.closed = []
+
+        def get_open_positions(self):
+            return self._open_positions
+
+        def close_position(self, position_id, current_price, reason):
+            self.closed.append((position_id, current_price, reason))
+            return SimpleNamespace(position_id=position_id)
+
+    class _NoopAgent:
+        def safe_analyse(self, *_args, **_kwargs):
+            return None
+
+    df = pd.DataFrame({"close": [101.0, 102.5]})
+    monkeypatch.setattr(event_processor_mod.data_store, "get_df", lambda *_a, **_k: df)
+    monkeypatch.setattr(event_processor_mod, "TRAINING_MODE", True)
+    monkeypatch.setattr(event_processor_mod, "TRAINING_POSITION_TIMEOUT_MINUTES", 60)
+    now = 1_700_000_000.0
+    monkeypatch.setattr(event_processor_mod.time, "time", lambda: now)
+
+    old_pos = SimpleNamespace(
+        position_id="p-old",
+        symbol="BTCUSDT",
+        interval="1h",
+        open_time=now - 61 * 60,
+        entry_price=100.0,
+    )
+    fresh_pos = SimpleNamespace(
+        position_id="p-new",
+        symbol="BTCUSDT",
+        interval="1h",
+        open_time=now - 10 * 60,
+        entry_price=100.0,
+    )
+    execution = _DummyExecution([old_pos, fresh_pos])
+    processor = EventProcessor(
+        pattern_agent=_NoopAgent(),
+        regime_agent=_NoopAgent(),
+        confluence_agent=_NoopAgent(),
+        risk_agent=_NoopAgent(),
+        strategy_agent=_NoopAgent(),
+        meta_agent=_NoopAgent(),
+        fusion=SimpleNamespace(_threshold=0.5),
+        execution=execution,
+    )
+
+    processor._close_timed_out_positions()
+
+    assert execution.closed == [("p-old", pytest.approx(102.5), "training_timeout")]
+
+
+def test_execution_training_mode_never_blocks_risk(monkeypatch):
+    monkeypatch.setattr(execution_mod, "TRAINING_MODE", True)
+    engine = ExecutionEngine(paper_trading=True, initial_balance=1000.0)
+    engine._daily_pnl = -9999.0
+    engine._weekly_pnl = -9999.0
+    engine._consecutive_losses = 999
+    engine._balance = 1.0
+
+    blocked, reason, details = engine.is_risk_blocked()
+
+    assert blocked is False
+    assert reason == ""
+    assert details["daily_loss_usdt"] > 0

@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple, List, Any
 
 from agents.base_agent import AgentResult
 from config.settings import FUSION_THRESHOLD_DEFAULT, FUSION_AGENT_WEIGHTS
+from config.settings import TRAINING_MODE
 
 logger = logging.getLogger("DecisionFusion")
 
@@ -23,9 +24,10 @@ except ImportError:
 
 # Sniper calibration constants
 _SNIPER_MIN_DIRECTION_AGREEMENT = 0.60   # minimum fraction of directional agents that must agree
-_SNIPER_MIN_AGREEING_TIMEFRAMES = 2      # minimum timeframes agreeing for MTF confluence
-_SNIPER_MIN_STRONG_AGENTS = 3            # minimum agents with score >= threshold for signal
-_SNIPER_AGENT_MIN_SCORE = 0.55           # raised from 0.45: agents at 0.45 are near-noise
+SNIPER_MIN_AGREEING_TIMEFRAMES = 1 if TRAINING_MODE else 2
+_SNIPER_MIN_AGREEING_TIMEFRAMES = SNIPER_MIN_AGREEING_TIMEFRAMES
+_SNIPER_MIN_STRONG_AGENTS = 1 if TRAINING_MODE else 3
+_SNIPER_AGENT_MIN_SCORE = 0.40 if TRAINING_MODE else 0.55
 DECISION_LONG = "long"
 DECISION_SHORT = "short"
 DECISION_HOLD = "hold"

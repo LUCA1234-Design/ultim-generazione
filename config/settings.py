@@ -230,11 +230,15 @@ SNIPER_MAX_OPEN_POSITIONS = 3
 if TRAINING_MODE:
     FUSION_THRESHOLD_DEFAULT = TRAINING_FUSION_THRESHOLD
     MIN_FUSION_SCORE = TRAINING_MIN_FUSION_SCORE
-    MIN_AGENT_CONFIRMATIONS = TRAINING_MIN_AGENT_CONFIRMATIONS
+    MIN_AGENT_CONFIRMATIONS = 2
     MIN_RR = TRAINING_MIN_RR
     NON_OPTIMAL_HOUR_PENALTY = TRAINING_NON_OPTIMAL_HOUR_PENALTY
     SIGNAL_COOLDOWN_BY_TF = TRAINING_SIGNAL_COOLDOWN_BY_TF
-    MAX_OPEN_POSITIONS = TRAINING_MAX_OPEN_POSITIONS
+    MAX_OPEN_POSITIONS = 5
+    SIGNAL_COOLDOWN = 60
+    TRAINING_POSITION_TIMEOUT_MINUTES = 60
+else:
+    TRAINING_POSITION_TIMEOUT_MINUTES = 60
 
 # ============================================================
 # HIGH MARGIN FILTER
@@ -246,6 +250,10 @@ HIGH_MARGIN_MIN_RR = 1.60            # R/R minimo per segnale "high margin" — 
                                      # con 2.5 TUTTI i segnali venivano bloccati in Training Mode.
 HIGH_MARGIN_MIN_FUSION_SCORE = 0.55  # Fusion score minimo per segnali high margin
 HIGH_MARGIN_BADGE = "🔥 HIGH MARGIN" # Badge da aggiungere ai messaggi
+
+if TRAINING_MODE:
+    HIGH_MARGIN_ONLY = False
+    HIGH_MARGIN_MIN_RR = MIN_RR
 
 # ============================================================
 # V18 — REINFORCEMENT LEARNING
