@@ -280,6 +280,8 @@ def build_stats_message(exec_stats: Dict[str, Any],
         "🤖 *Agent Weights:*",
     ]
     for name, info in agent_report.items():
+        if not isinstance(info, dict):
+            continue
         w = info.get("weight", 1.0) or 1.0
         wr = info.get("win_rate", 0.5)
         n = info.get("n_decisions", 0)

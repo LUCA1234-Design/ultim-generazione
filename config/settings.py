@@ -209,10 +209,10 @@ TRAINING_MODE = True                # Enable reduced thresholds for fast learnin
 TRAINING_TARGET_TRADES = 200        # Completed trades required before switching to Sniper Mode
 
 # Training Mode overrides (lower thresholds to generate more signals)
-TRAINING_FUSION_THRESHOLD = 0.35
-TRAINING_MIN_FUSION_SCORE = 0.30
+TRAINING_FUSION_THRESHOLD = 0.30
+TRAINING_MIN_FUSION_SCORE = 0.25
 TRAINING_MIN_AGENT_CONFIRMATIONS = 2
-TRAINING_MIN_RR = 1.20
+TRAINING_MIN_RR = 0.90
 TRAINING_NON_OPTIMAL_HOUR_PENALTY = 0.02
 TRAINING_SIGNAL_COOLDOWN_BY_TF = {"15m": 600, "1h": 1800, "4h": 3600}
 TRAINING_MAX_OPEN_POSITIONS = 5

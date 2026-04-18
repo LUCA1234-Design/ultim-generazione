@@ -3,6 +3,7 @@ Misura la latenza di rete verso i server Binance e la include nei report.
 Utile per valutare se conviene migrare a AWS Tokyo (ap-northeast-1).
 """
 import logging
+import math
 import threading
 import time
 from collections import deque
@@ -66,6 +67,14 @@ def record_ws_delay(ws_delay_ms: float) -> None:
         delay = float(ws_delay_ms)
     except Exception:
         return
+    if not math.isfinite(delay):
+        return
+    # Filter obviously wrong values from timestamp desync / malformed payloads.
+    if abs(delay) > 300_000:  # 5 minutes
+        return
+    # Small negative values are possible with clock skew; clamp to zero.
+    if delay < 0:
+        delay = 0.0
     with _lock:
         _WS_DELAY_SAMPLES.append(delay)
 
