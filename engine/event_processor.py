@@ -66,6 +66,10 @@ class EventProcessor:
         self.contrarian_agent = contrarian_agent
         self.kill_switch = kill_switch
         self.supervisor = supervisor
+        self.institutional_risk = None
+        # Optional callback invoked on emergency institutional risk events.
+        # Signature: callback(message: str) -> Any
+        self.risk_alert_callback: Optional[Callable[[str], Any]] = None
         self._evolution_engine = None
 
         self._last_signal_time: Dict[str, float] = {}
@@ -302,17 +306,45 @@ class EventProcessor:
                 initial_bal = exec_stats.get("initial_balance", balance)
                 # Use tracked peak balance for correct drawdown calculation (L3)
                 peak_bal = exec_stats.get("peak_balance", balance)
+                risk_df = data_store.get_df(symbol, interval)
+                market_state = {"market_vol": 0.0, "baseline_vol": 0.01, "flash_crash": False}
+                if self.institutional_risk is not None and risk_df is not None and len(risk_df) > 5:
+                    market_state = self.institutional_risk.compute_market_state(risk_df["close"].tail(80))
                 portfolio_state = {
                     "balance": balance,
                     "initial_balance": initial_bal,
                     "peak_balance": peak_bal,
                     "daily_pnl": exec_stats.get("daily_pnl", 0),
                     "positions": [{"symbol": p.symbol, "pnl_pct": 0} for p in open_pos],
-                    "market_vol": 0,      # not tracked at this layer; L5 trip unlikely
-                    "baseline_vol": 0.01,
+                    "market_vol": market_state.get("market_vol", 0.0),
+                    "baseline_vol": market_state.get("baseline_vol", 0.01),
+                    "flash_crash": market_state.get("flash_crash", False),
                     "avg_correlation": 0,
                 }
-                self.kill_switch.check_all_levels(portfolio_state)
+                kill_result = self.kill_switch.check_all_levels(portfolio_state)
+                if (
+                    self.institutional_risk is not None
+                    and self.institutional_risk.should_kill_globally(kill_result)
+                ):
+                    if not self.execution.is_standby():
+                        self.execution.cancel_pending_orders()
+                        closed = self.execution.close_all_positions(reason="kill_switch")
+                        self.execution.set_standby(True, reason="institutional_kill_switch")
+                        triggered_levels = kill_result.get("triggered_levels", [])
+                        emergency_cause = "daily_loss_limit" if 2 in triggered_levels else "volatility_or_flash_crash"
+                        msg = (
+                            f"🔴 CIRCUIT BREAKER ACTIVE\n"
+                            f"cause={emergency_cause} "
+                            f"levels={triggered_levels} "
+                            f"closed_positions={len(closed)} "
+                            f"daily_pnl={portfolio_state['daily_pnl']:.2f}"
+                        )
+                        logger.warning(msg)
+                        if self.risk_alert_callback is not None:
+                            try:
+                                self.risk_alert_callback(msg)
+                            except Exception as _alert_err:
+                                logger.debug(f"risk_alert_callback error: {_alert_err}")
                 if self.kill_switch.is_killed():
                     self._skip("kill_switch_killed")
                     logger.warning(f"🔴 {symbol}/{interval} SKIP: Kill Switch KILLED")
@@ -564,6 +596,21 @@ class EventProcessor:
                 logger.debug(f"🎓 PPO size multiplier [{symbol}]: {rl_mult:.2f}x → size={size:.6f}")
             except Exception as _rl_err:
                 logger.debug(f"🎓 PPO size hint skipped: {_rl_err}")
+
+        # Institutional ATR-based dynamic position sizing cap
+        if self.institutional_risk is not None:
+            try:
+                from indicators.technical import atr as calc_atr
+                atr_val = float(calc_atr(df, 14).iloc[-1])
+                balance = float(self.execution.get_stats().get("balance", _cfg.ACCOUNT_BALANCE))
+                size = self.institutional_risk.apply_atr_position_sizing(
+                    current_size=size,
+                    balance=balance,
+                    entry_price=entry,
+                    atr_value=atr_val,
+                )
+            except Exception as _atr_size_err:
+                logger.debug(f"institutional ATR sizing skipped: {_atr_size_err}")
 
         try:
             risk = abs(entry - sl)
