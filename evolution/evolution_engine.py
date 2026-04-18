@@ -33,6 +33,7 @@ import logging
 import os
 import threading
 import time
+import json
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -129,6 +130,8 @@ _DRAWDOWN_CRITICAL = 0.15   # 15% → safe mode
 _DRIFT_RETRAIN_COOLDOWN = 3600  # minimum seconds between re-trains
 _BACKTEST_VALIDATION_INTERVAL = 7200  # 2h between full backtest runs
 _BACKTEST_MIN_TRADES = 20    # minimum trades for backtest validation
+_PPO_MODEL_PATH = "models/ppo_runtime_state.npz"
+_RUNTIME_STATE_PATH = "models/evolution_runtime_state.json"
 
 
 class EvolutionEngine:
@@ -329,6 +332,9 @@ class EvolutionEngine:
                         logger.debug("EvolutionEngine: HMM fit returned False (insufficient data at startup)")
         except Exception as exc:
             logger.debug(f"EvolutionEngine HMM fit error: {exc}")
+
+        # Restore runtime learning state (buffers + PPO weights)
+        self._load_runtime_state()
 
     def on_trade_close(
         self,
@@ -865,6 +871,9 @@ class EvolutionEngine:
         """Persist all state — call on graceful shutdown."""
         try:
             self._meta.save_state()
+        except Exception as exc:
+            logger.error(f"EvolutionEngine.shutdown meta.save_state error: {exc}")
+        try:
             experience_db.save_param(
                 "fusion_threshold", self._fusion._threshold, "shutdown"
             )
@@ -878,9 +887,11 @@ class EvolutionEngine:
                 self._strategy_evolver.trade_count,
                 "shutdown",
             )
-            logger.info("💾 EvolutionEngine: state saved on shutdown")
         except Exception as exc:
-            logger.error(f"EvolutionEngine.shutdown error: {exc}")
+            logger.error(f"EvolutionEngine.shutdown db save error: {exc}")
+
+        self._save_runtime_state()
+        logger.info("💾 EvolutionEngine: state saved on shutdown")
 
     def get_report(self) -> Dict[str, Any]:
         """Return a human-readable summary of the current evolution state."""
@@ -1013,6 +1024,9 @@ class EvolutionEngine:
         """Persist MetaAgent state and current tuned parameters."""
         try:
             self._meta.save_state()
+        except Exception as exc:
+            logger.error(f"_save_state meta.save_state error: {exc}")
+        try:
             experience_db.save_param(
                 "fusion_threshold", self._fusion._threshold, "periodic"
             )
@@ -1026,6 +1040,92 @@ class EvolutionEngine:
                 self._strategy_evolver.trade_count,
                 "periodic",
             )
-            logger.info("💾 EvolutionEngine: periodic state save complete")
         except Exception as exc:
-            logger.error(f"_save_state error: {exc}")
+            logger.error(f"_save_state db save error: {exc}")
+
+        self._save_runtime_state()
+        logger.info("💾 EvolutionEngine: periodic state save complete")
+
+    def _save_runtime_state(self) -> None:
+        """Persist runtime learning state not covered by DB params."""
+        try:
+            os.makedirs(os.path.dirname(_RUNTIME_STATE_PATH) or ".", exist_ok=True)
+            os.makedirs(os.path.dirname(_PPO_MODEL_PATH) or ".", exist_ok=True)
+            payload = {
+                "saved_at": time.time(),
+                "closed_trades_buffer": self._closed_trades_buffer[-500:],
+                "last_hyperopt_params": self._last_hyperopt_params,
+                "checkpoint_win_rate": self._checkpoint_win_rate,
+                "ppo_experience_buffer": [
+                    {
+                        "symbol": str(e.get("symbol", "")),
+                        "trade_reward": float(e.get("trade_reward", 0.0)),
+                        "pnl": float(e.get("pnl", 0.0)),
+                        "state": np.asarray(e.get("state", np.zeros(12))).tolist(),
+                        "action": int(e.get("action", 0)),
+                        "log_prob": float(e.get("log_prob", 0.0)),
+                        "reward": float(e.get("reward", 0.0)),
+                        "value": float(e.get("value", 0.0)),
+                        "done": float(e.get("done", 1.0)),
+                        "next_state": np.asarray(e.get("next_state", np.zeros(12))).tolist(),
+                    }
+                    for e in self._ppo_experience_buffer[-200:]
+                ],
+            }
+            with open(_RUNTIME_STATE_PATH, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            if self._ppo is not None and hasattr(self._ppo, "save"):
+                self._ppo.save(_PPO_MODEL_PATH)
+        except Exception as exc:
+            logger.error(f"_save_runtime_state error: {exc}")
+
+    def _load_runtime_state(self) -> None:
+        """Restore runtime learning state from disk if available."""
+        try:
+            if self._ppo is not None and hasattr(self._ppo, "load") and os.path.exists(_PPO_MODEL_PATH):
+                if self._ppo.load(_PPO_MODEL_PATH):
+                    logger.info("🎓 EvolutionEngine: restored PPO runtime model")
+        except Exception as exc:
+            logger.debug(f"_load_runtime_state ppo load error: {exc}")
+
+        try:
+            if not os.path.exists(_RUNTIME_STATE_PATH):
+                return
+            with open(_RUNTIME_STATE_PATH, "r", encoding="utf-8") as fh:
+                payload = json.load(fh)
+
+            loaded_closed = payload.get("closed_trades_buffer", [])
+            if isinstance(loaded_closed, list):
+                self._closed_trades_buffer = loaded_closed[-500:]
+
+            self._last_hyperopt_params = payload.get("last_hyperopt_params")
+            self._checkpoint_win_rate = float(payload.get("checkpoint_win_rate", self._checkpoint_win_rate))
+
+            loaded_exp = payload.get("ppo_experience_buffer", [])
+            rebuilt = []
+            if isinstance(loaded_exp, list):
+                for e in loaded_exp[-200:]:
+                    try:
+                        rebuilt.append(
+                            {
+                                "symbol": str(e.get("symbol", "")),
+                                "trade_reward": float(e.get("trade_reward", 0.0)),
+                                "pnl": float(e.get("pnl", 0.0)),
+                                "state": np.asarray(e.get("state", []), dtype=float),
+                                "action": int(e.get("action", 0)),
+                                "log_prob": float(e.get("log_prob", 0.0)),
+                                "reward": float(e.get("reward", 0.0)),
+                                "value": float(e.get("value", 0.0)),
+                                "done": float(e.get("done", 1.0)),
+                                "next_state": np.asarray(e.get("next_state", []), dtype=float),
+                            }
+                        )
+                    except Exception:
+                        continue
+            self._ppo_experience_buffer = rebuilt
+            logger.info(
+                f"💾 EvolutionEngine: runtime state restored "
+                f"(closed={len(self._closed_trades_buffer)}, ppo_exp={len(self._ppo_experience_buffer)})"
+            )
+        except Exception as exc:
+            logger.debug(f"_load_runtime_state error: {exc}")
