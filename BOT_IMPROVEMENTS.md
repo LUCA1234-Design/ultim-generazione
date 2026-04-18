@@ -2,7 +2,7 @@
 
 1. **Multi-source data fusion (top signals)**
    - Add on-chain metrics (exchange inflow/outflow, whale wallets).
-   - Add macro/sentiment features (DXY, rates, crypto fear-greed, funding/OI term structure).
+   - Add macro/sentiment features (DXY, rates, crypto fear-greed, funding/Open Interest (OI) term structure).
    - Use robust feature-quality gating before feeding agents.
 
 2. **Advanced indicators and microstructure**

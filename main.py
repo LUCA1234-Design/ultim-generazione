@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, Tuple
 
 # ---- Config ----
 from config.settings import (
@@ -404,10 +404,13 @@ def _position_monitor(
     evolution_engine: Optional["EvolutionEngine"] = None,
 ) -> None:
     """Periodically update SL/TP levels for open positions using latest prices."""
-    processed_close_ids: set[str] = set()
+    processed_close_ids: Set[Tuple[str, Any]] = set()
 
     def _handle_closed_position(closed) -> None:
-        close_id = getattr(closed, "position_id", None) or f"{getattr(closed, 'decision_id', '')}:{getattr(closed, 'close_time', '')}"
+        close_id = (
+            str(getattr(closed, "position_id", "") or ""),
+            getattr(closed, "close_time", None),
+        )
         if close_id in processed_close_ids:
             return
 
@@ -541,9 +544,9 @@ def _position_monitor(
             recent = processor.execution.get_closed_positions(limit=1000)
             processed_close_ids.clear()
             for p in recent:
-                _id = getattr(p, "position_id", None)
+                _id = str(getattr(p, "position_id", "") or "")
                 if _id:
-                    processed_close_ids.add(_id)
+                    processed_close_ids.add((_id, getattr(p, "close_time", None)))
 
     while True:
         try:

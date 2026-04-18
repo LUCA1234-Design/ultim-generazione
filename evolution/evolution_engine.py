@@ -130,8 +130,8 @@ _DRAWDOWN_CRITICAL = 0.15   # 15% → safe mode
 _DRIFT_RETRAIN_COOLDOWN = 3600  # minimum seconds between re-trains
 _BACKTEST_VALIDATION_INTERVAL = 7200  # 2h between full backtest runs
 _BACKTEST_MIN_TRADES = 20    # minimum trades for backtest validation
-_PPO_MODEL_PATH = "models/ppo_runtime_state.npz"
-_RUNTIME_STATE_PATH = "models/evolution_runtime_state.json"
+_PPO_MODEL_PATH = os.getenv("PPO_RUNTIME_STATE_PATH", "models/ppo_runtime_state.npz")
+_RUNTIME_STATE_PATH = os.getenv("EVOLUTION_RUNTIME_STATE_PATH", "models/evolution_runtime_state.json")
 
 
 class EvolutionEngine:
