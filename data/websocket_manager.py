@@ -46,6 +46,7 @@ _WS_CONNECTED_AT: Dict[str, float] = {}  # ws_name -> timestamp of last on_open
 # Callbacks registered by the event processor
 _on_kline_closed: Optional[Callable] = None
 _on_kline_update: Optional[Callable] = None
+_SECONDS_TS_UPPER_BOUND = 100_000_000_000  # heuristic boundary to distinguish seconds-based vs milliseconds-based Unix timestamps
 
 
 def register_callbacks(on_closed: Callable, on_update: Callable) -> None:
@@ -53,6 +54,30 @@ def register_callbacks(on_closed: Callable, on_update: Callable) -> None:
     global _on_kline_closed, _on_kline_update
     _on_kline_closed = on_closed
     _on_kline_update = on_update
+
+
+def _normalize_exchange_ts_ms(ts_raw) -> Optional[int]:
+    """Return exchange timestamp normalized to milliseconds."""
+    try:
+        ts = int(float(ts_raw))
+    except Exception:
+        return None
+    if ts <= 0:
+        return None
+    # Assume values below this threshold are seconds-based Unix timestamps.
+    if ts < _SECONDS_TS_UPPER_BOUND:
+        ts *= 1000
+    return ts
+
+
+def _compute_ws_delay_ms(stream_data: dict, kline: dict, is_closed: bool, recv_ms: float) -> Optional[float]:
+    """Compute websocket delay using event time (E) and fallback to close time only for closed candles."""
+    event_ts_ms = _normalize_exchange_ts_ms(stream_data.get("E"))
+    if event_ts_ms is None and is_closed:
+        event_ts_ms = _normalize_exchange_ts_ms(kline.get("T"))
+    if event_ts_ms is None:
+        return None
+    return float(recv_ms - event_ts_ms)
 
 def _init_ws_state(ws_name: str) -> None:
     WS_HEALTH[ws_name] = {
@@ -109,10 +134,15 @@ def _handle_message(ws_name: str, raw_message: str) -> None:
         is_closed: bool = kline.get("x", False)
         key = f"{symbol}_{interval}"
 
-        # Measure delay between Binance kline close timestamp and local receive time
-        kline_close_time_ms = int(kline.get("T", 0))
-        if kline_close_time_ms > 0:
-            ws_delay_ms = (time.time() * 1000) - kline_close_time_ms
+        # Measure delay between Binance event timestamp and local receive time.
+        # Using close time for non-closed candles can produce large negative values.
+        ws_delay_ms = _compute_ws_delay_ms(
+            stream_data=stream_data,
+            kline=kline,
+            is_closed=is_closed,
+            recv_ms=time.time() * 1000.0,
+        )
+        if ws_delay_ms is not None:
             try:
                 from services.latency_monitor import record_ws_delay
                 record_ws_delay(ws_delay_ms)

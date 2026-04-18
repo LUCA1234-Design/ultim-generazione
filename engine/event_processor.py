@@ -18,7 +18,7 @@ from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, 
 from engine.execution import ExecutionEngine
 from data import data_store
 import config.settings as _cfg
-from config.settings import TRAINING_MODE, TRAINING_POSITION_TIMEOUT_MINUTES
+from config.settings import TRAINING_MODE, TRAINING_POSITION_TIMEOUT_MINUTES, TRAINING_MIN_PATTERN_SCORE
 
 logger = logging.getLogger("EventProcessor")
 
@@ -448,7 +448,7 @@ class EventProcessor:
 
         # === FILTRO REGIME VOLATILE POTENZIATO ===
         if current_regime == "volatile" and regime_result is not None:
-            min_score = 0.50 if TRAINING_MODE else 0.80
+            min_score = 0.40 if TRAINING_MODE else 0.80
             if regime_result.score < min_score:
                 self._skip("unfavorable_regime")
                 logger.info(
@@ -456,8 +456,23 @@ class EventProcessor:
                     f"score={regime_result.score:.2f} < {min_score:.2f}"
                 )
                 return None
-            # Anche con score >= 0.80, richiedere conferma pattern
-            if "pattern" not in agent_results or agent_results["pattern"].score < 0.65:
+            pattern_score = (
+                agent_results["pattern"].score
+                if "pattern" in agent_results and agent_results["pattern"] is not None
+                else None
+            )
+            has_sniper_pattern_confirmation = pattern_score is not None and pattern_score >= 0.65
+            # In Training Mode allow volatile regime with weak pattern (except extreme weakness).
+            if TRAINING_MODE:
+                if pattern_score is not None and pattern_score < TRAINING_MIN_PATTERN_SCORE:
+                    self._skip("unfavorable_regime")
+                    logger.info(
+                        f"⛔ {symbol}/{interval} SKIP: volatile_regime_very_weak_pattern "
+                        f"pattern={pattern_score:.2f}"
+                    )
+                    return None
+            # In Sniper Mode keep strict pattern confirmation.
+            elif not has_sniper_pattern_confirmation:
                 self._skip("unfavorable_regime")
                 logger.info(
                     f"⛔ {symbol}/{interval} SKIP: volatile_regime_no_pattern_confirm"
@@ -470,7 +485,7 @@ class EventProcessor:
             agent_results["confluence"] = confluence_result
             # ---- SNIPER: Require MTF confluence unless training ----
             agreeing_tfs = confluence_result.metadata.get("agreeing_tfs", 0) if confluence_result.metadata else 0
-            _min_tfs = 1 if TRAINING_MODE else SNIPER_MIN_AGREEING_TIMEFRAMES
+            _min_tfs = 0 if TRAINING_MODE else SNIPER_MIN_AGREEING_TIMEFRAMES
             if agreeing_tfs < _min_tfs:
                 self._skip("weak_confluence")
                 logger.info(
