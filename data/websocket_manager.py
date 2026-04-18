@@ -46,6 +46,7 @@ _WS_CONNECTED_AT: Dict[str, float] = {}  # ws_name -> timestamp of last on_open
 # Callbacks registered by the event processor
 _on_kline_closed: Optional[Callable] = None
 _on_kline_update: Optional[Callable] = None
+_SECONDS_TS_UPPER_BOUND = 100_000_000_000  # values below are treated as seconds, otherwise milliseconds
 
 
 def register_callbacks(on_closed: Callable, on_update: Callable) -> None:
@@ -64,7 +65,7 @@ def _normalize_exchange_ts_ms(ts_raw) -> Optional[int]:
     if ts <= 0:
         return None
     # Assume values below this threshold are seconds-based Unix timestamps.
-    if ts < 100_000_000_000:
+    if ts < _SECONDS_TS_UPPER_BOUND:
         ts *= 1000
     return ts
 
