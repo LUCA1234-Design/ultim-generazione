@@ -15,6 +15,7 @@ logger = logging.getLogger("LatencyMonitor")
 
 _RTT_SAMPLES = deque(maxlen=100)
 _WS_DELAY_SAMPLES = deque(maxlen=100)
+_MAX_ACCEPTABLE_WS_DELAY_MS = 300_000
 _lock = threading.Lock()
 _started = False
 
@@ -70,7 +71,7 @@ def record_ws_delay(ws_delay_ms: float) -> None:
     if not math.isfinite(delay):
         return
     # Filter obviously wrong values from timestamp desync / malformed payloads.
-    if abs(delay) > 300_000:  # 5 minutes (300,000 ms)
+    if abs(delay) > _MAX_ACCEPTABLE_WS_DELAY_MS:  # 5 minutes (300,000 ms)
         return
     # Small negative values are possible with clock skew; clamp to zero.
     if delay < 0:
