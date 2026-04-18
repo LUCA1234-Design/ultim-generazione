@@ -461,7 +461,7 @@ class EventProcessor:
                 if "pattern" in agent_results and agent_results["pattern"] is not None
                 else None
             )
-            # In Training Mode accettiamo regime volatile con pattern debole (ma non nullo estremo)
+            # In Training Mode allow volatile regime with weak pattern (except extreme weakness).
             if TRAINING_MODE:
                 if pattern_score is not None and pattern_score < 0.35:
                     self._skip("unfavorable_regime")
@@ -470,7 +470,7 @@ class EventProcessor:
                         f"pattern={pattern_score:.2f}"
                     )
                     return None
-            # In Sniper Mode manteniamo la conferma pattern stringente
+            # In Sniper Mode keep strict pattern confirmation.
             elif pattern_score is None or pattern_score < 0.65:
                 self._skip("unfavorable_regime")
                 logger.info(

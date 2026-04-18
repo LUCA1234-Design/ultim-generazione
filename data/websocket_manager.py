@@ -63,8 +63,8 @@ def _normalize_exchange_ts_ms(ts_raw) -> Optional[int]:
         return None
     if ts <= 0:
         return None
-    # If timestamp is in seconds, convert to milliseconds.
-    if ts < 100_000_000_000:  # ~ year 5138 in seconds
+    # Assume values below this threshold are seconds-based Unix timestamps.
+    if ts < 100_000_000_000:
         ts *= 1000
     return ts
 
