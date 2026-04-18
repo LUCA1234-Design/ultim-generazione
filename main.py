@@ -7,7 +7,7 @@ import logging
 import sys
 import threading
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set, Tuple
 
 # ---- Config ----
 from config.settings import (
@@ -404,6 +404,150 @@ def _position_monitor(
     evolution_engine: Optional["EvolutionEngine"] = None,
 ) -> None:
     """Periodically update SL/TP levels for open positions using latest prices."""
+    processed_close_ids: Set[Tuple[str, Any]] = set()
+
+    def _handle_closed_position(closed) -> None:
+        close_id = (
+            str(getattr(closed, "position_id", "") or ""),
+            getattr(closed, "close_time", None),
+        )
+        if close_id in processed_close_ids:
+            return
+
+        # Track performance
+        try:
+            tracker.record_position(closed)
+        except Exception as e:
+            logger.error(f"tracker.record_position error: {e}")
+
+        # Notify close
+        try:
+            notify_position_closed(closed)
+        except Exception as e:
+            logger.error(f"notify_position_closed error: {e}")
+
+        # Update decision outcome in DB
+        try:
+            if closed.decision_id:
+                experience_db.update_decision_outcome(
+                    decision_id=closed.decision_id,
+                    outcome=closed.status,
+                    pnl=closed.pnl or 0.0,
+                )
+        except Exception as e:
+            logger.error(f"update_decision_outcome error: {e}")
+
+        # After updating decision outcome, adapt the fusion threshold
+        try:
+            correct = (closed.pnl or 0.0) > 0
+            processor.fusion.adapt_threshold(correct, 0.0)
+        except Exception as e:
+            logger.error(f"adapt_threshold error: {e}")
+
+        # Save agent outcomes in DB
+        try:
+            ctx = decision_context.get(closed.decision_id, {})
+            agent_scores = ctx.get("agent_scores", {})
+            agent_directions = ctx.get("agent_directions", {})
+            correct = (closed.pnl or 0.0) > 0
+
+            # Extract pattern tags for the pattern agent row
+            pattern_tags = ""
+            pattern_ctx = ctx.get("agent_results", {}).get("pattern")
+            if pattern_ctx and hasattr(pattern_ctx, "details"):
+                clean_tags = [
+                    str(d).split("(")[0].strip()
+                    for d in list(pattern_ctx.details)[:10]
+                    if d
+                ]
+                pattern_tags = ",".join(clean_tags)
+
+            for agent_name, score in agent_scores.items():
+                experience_db.save_agent_outcome(
+                    decision_id=closed.decision_id,
+                    agent_name=agent_name,
+                    score=float(score),
+                    direction=str(agent_directions.get(agent_name, "")),
+                    correct=correct,
+                    pattern_tags=pattern_tags if agent_name == "pattern" else "",
+                )
+        except Exception as e:
+            logger.error(f"save_agent_outcome error: {e}")
+
+        # NOTE: strategy outcome is forwarded via evolution_engine.on_trade_close()
+        # -> StrategyEvolver.record_trade() -> strategy.update_strategy_outcome().
+        # Do NOT call update_strategy_outcome() here directly (would double-count).
+
+        # Record outcome in MetaAgent for weight adjustment (Fix 8)
+        try:
+            ctx = decision_context.get(closed.decision_id, {})
+            stored_agent_results = ctx.get("agent_results", {})
+            regime = ctx.get("regime", "unknown")
+            if stored_agent_results and hasattr(processor.meta, "record_outcome"):
+                was_correct = (closed.pnl or 0.0) > 0
+                processor.meta.record_outcome(
+                    closed.decision_id,
+                    stored_agent_results,
+                    was_correct,
+                    regime=regime,
+                )
+        except Exception as e:
+            logger.error(f"meta.record_outcome error: {e}")
+
+        # Save ctx before pop
+        try:
+            ctx_for_evolution = decision_context.get(closed.decision_id, {})
+        except Exception:
+            ctx_for_evolution = {}
+
+        # Clean runtime context (main cache)
+        try:
+            if closed.decision_id in decision_context:
+                decision_context.pop(closed.decision_id, None)
+        except Exception as e:
+            logger.debug(f"decision_context cleanup error: {e}")
+
+        # Notify evolution engine of closed trade (usa ctx_for_evolution, non decision_context)
+        try:
+            if evolution_engine is not None:
+                # Also try the processor's own context store if ctx is empty
+                if not ctx_for_evolution and hasattr(processor, "get_decision_context"):
+                    ctx_for_evolution = processor.get_decision_context(
+                        getattr(closed, "decision_id", None)
+                    ) or {}
+                evolution_engine.on_trade_close(closed, ctx_for_evolution)
+        except Exception as e:
+            logger.error(f"evolution_engine.on_trade_close error: {e}")
+
+        # Cleanup processor-side fallback cache only after evolution callback
+        try:
+            if hasattr(processor, "clear_decision_context"):
+                processor.clear_decision_context(getattr(closed, "decision_id", ""))
+        except Exception as e:
+            logger.debug(f"processor.decision_context cleanup error: {e}")
+
+        # V18: Publish trade.close event on MessageBus
+        try:
+            if _MSG_BUS_AVAILABLE:
+                get_message_bus().publish(TOPIC_TRADE_CLOSE, {
+                    "symbol": closed.symbol,
+                    "pnl": closed.pnl,
+                    "strategy": closed.strategy,
+                })
+        except Exception:
+            pass
+
+        processed_close_ids.add(close_id)
+
+        # Bound memory in long-running sessions
+        if len(processed_close_ids) > 5000:
+            recent = processor.execution.get_closed_positions(limit=1000)
+            processed_close_ids.clear()
+            for p in recent:
+                _id = str(getattr(p, "position_id", "") or "")
+                if _id:
+                    processed_close_ids.add((_id, getattr(p, "close_time", None)))
+
     while True:
         try:
             open_pos = processor.execution.get_open_positions()
@@ -416,121 +560,11 @@ def _position_monitor(
                 closed_positions = processor.execution.check_position_levels(pos.symbol, current_price)
 
                 for closed in closed_positions:
-                    # Track performance
-                    try:
-                        tracker.record_position(closed)
-                    except Exception as e:
-                        logger.error(f"tracker.record_position error: {e}")
+                    _handle_closed_position(closed)
 
-                    # Notify close
-                    try:
-                        notify_position_closed(closed)
-                    except Exception as e:
-                        logger.error(f"notify_position_closed error: {e}")
-
-                    # Update decision outcome in DB
-                    try:
-                        if closed.decision_id:
-                            experience_db.update_decision_outcome(
-                                decision_id=closed.decision_id,
-                                outcome=closed.status,
-                                pnl=closed.pnl or 0.0,
-                            )
-                    except Exception as e:
-                        logger.error(f"update_decision_outcome error: {e}")
-
-                    # After updating decision outcome, adapt the fusion threshold
-                    try:
-                        correct = (closed.pnl or 0.0) > 0
-                        processor.fusion.adapt_threshold(correct, 0.0)
-                    except Exception as e:
-                        logger.error(f"adapt_threshold error: {e}")
-
-                    # Save agent outcomes in DB
-                    try:
-                        ctx = decision_context.get(closed.decision_id, {})
-                        agent_scores = ctx.get("agent_scores", {})
-                        agent_directions = ctx.get("agent_directions", {})
-                        correct = (closed.pnl or 0.0) > 0
-
-                        # Extract pattern tags for the pattern agent row
-                        pattern_tags = ""
-                        pattern_ctx = ctx.get("agent_results", {}).get("pattern")
-                        if pattern_ctx and hasattr(pattern_ctx, "details"):
-                            clean_tags = [
-                                str(d).split("(")[0].strip()
-                                for d in list(pattern_ctx.details)[:10]
-                                if d
-                            ]
-                            pattern_tags = ",".join(clean_tags)
-
-                        for agent_name, score in agent_scores.items():
-                            experience_db.save_agent_outcome(
-                                decision_id=closed.decision_id,
-                                agent_name=agent_name,
-                                score=float(score),
-                                direction=str(agent_directions.get(agent_name, "")),
-                                correct=correct,
-                                pattern_tags=pattern_tags if agent_name == "pattern" else "",
-                            )
-                    except Exception as e:
-                        logger.error(f"save_agent_outcome error: {e}")
-
-                    # NOTE: strategy outcome is forwarded via evolution_engine.on_trade_close()
-                    # -> StrategyEvolver.record_trade() -> strategy.update_strategy_outcome().
-                    # Do NOT call update_strategy_outcome() here directly (would double-count).
-
-                    # Record outcome in MetaAgent for weight adjustment (Fix 8)
-                    try:
-                        ctx = decision_context.get(closed.decision_id, {})
-                        stored_agent_results = ctx.get("agent_results", {})
-                        regime = ctx.get("regime", "unknown")
-                        if stored_agent_results and hasattr(processor.meta, "record_outcome"):
-                            was_correct = (closed.pnl or 0.0) > 0
-                            processor.meta.record_outcome(
-                                closed.decision_id,
-                                stored_agent_results,
-                                was_correct,
-                                regime=regime,
-                            )
-                    except Exception as e:
-                        logger.error(f"meta.record_outcome error: {e}")
-
-                    # Salvare ctx PRIMA del pop
-                    try:
-                        ctx_for_evolution = decision_context.get(closed.decision_id, {})
-                    except Exception:
-                        ctx_for_evolution = {}
-
-                    # Clean runtime context
-                    try:
-                        if closed.decision_id in decision_context:
-                            decision_context.pop(closed.decision_id, None)
-                    except Exception as e:
-                        logger.debug(f"decision_context cleanup error: {e}")
-
-                    # Notify evolution engine of closed trade (usa ctx_for_evolution, non decision_context)
-                    try:
-                        if evolution_engine is not None:
-                            # Also try the processor's own context store if ctx is empty
-                            if not ctx_for_evolution and hasattr(processor, "get_decision_context"):
-                                ctx_for_evolution = processor.get_decision_context(
-                                    getattr(closed, "decision_id", None)
-                                ) or {}
-                            evolution_engine.on_trade_close(closed, ctx_for_evolution)
-                    except Exception as e:
-                        logger.error(f"evolution_engine.on_trade_close error: {e}")
-
-                    # V18: Publish trade.close event on MessageBus
-                    try:
-                        if _MSG_BUS_AVAILABLE:
-                            get_message_bus().publish(TOPIC_TRADE_CLOSE, {
-                                "symbol": closed.symbol,
-                                "pnl": closed.pnl,
-                                "strategy": closed.strategy,
-                            })
-                    except Exception:
-                        pass
+            # Catch closes executed outside check_position_levels (e.g. training timeouts)
+            for closed in processor.execution.get_closed_positions(limit=200):
+                _handle_closed_position(closed)
 
         except Exception as e:
             logger.debug(f"position_monitor error: {e}")
