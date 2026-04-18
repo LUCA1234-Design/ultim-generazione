@@ -494,7 +494,7 @@ def _position_monitor(
         except Exception as e:
             logger.error(f"meta.record_outcome error: {e}")
 
-        # Salvare ctx PRIMA del pop
+        # Save ctx before pop
         try:
             ctx_for_evolution = decision_context.get(closed.decision_id, {})
         except Exception:

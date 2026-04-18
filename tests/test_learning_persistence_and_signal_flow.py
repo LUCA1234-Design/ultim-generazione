@@ -73,7 +73,10 @@ def test_position_monitor_processes_closed_positions_outside_price_checks(monkey
         "save_agent_outcome",
         lambda **kwargs: outcomes.append(kwargs),
     )
-    monkeypatch.setattr(main_mod.time, "sleep", lambda _sec: (_ for _ in ()).throw(KeyboardInterrupt()))
+    def _raise_keyboard_interrupt(_sec):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(main_mod.time, "sleep", _raise_keyboard_interrupt)
 
     with pytest.raises(KeyboardInterrupt):
         main_mod._position_monitor(
