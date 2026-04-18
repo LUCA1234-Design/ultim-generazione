@@ -103,6 +103,7 @@ class KillSwitch:
             'positions': [...],
             'market_vol': 0.05,
             'baseline_vol': 0.02,
+            'flash_crash': False,
         }
         result = kill.check_all_levels(state)
         if kill.is_killed():
@@ -141,6 +142,7 @@ class KillSwitch:
             'positions'       : list of position dicts
             'market_vol'      : current market volatility
             'baseline_vol'    : average market volatility
+            'flash_crash'     : abnormal multi-minute crash flag
             'avg_correlation' : average correlation between open positions
 
         Returns
@@ -158,6 +160,7 @@ class KillSwitch:
             positions = portfolio_state.get("positions", [])
             market_vol = float(portfolio_state.get("market_vol", 0))
             baseline_vol = float(portfolio_state.get("baseline_vol", market_vol + 1e-8))
+            flash_crash = bool(portfolio_state.get("flash_crash", False))
             avg_corr = float(portfolio_state.get("avg_correlation", 0))
 
             # Level 1: Individual position losses
@@ -195,8 +198,12 @@ class KillSwitch:
             # Level 5: Volatility explosion
             if baseline_vol > 1e-8:
                 vol_ratio = market_vol / baseline_vol
-                if vol_ratio > self._levels[5].threshold:
-                    self._levels[5].trip(f"Volatility {vol_ratio:.1f}x baseline")
+                if vol_ratio > self._levels[5].threshold or flash_crash:
+                    if flash_crash:
+                        reason = "Flash crash detected"
+                    else:
+                        reason = f"Volatility {vol_ratio:.1f}x baseline"
+                    self._levels[5].trip(reason)
                     triggered.append(5)
                     actions.append("KILL_ALL")
 

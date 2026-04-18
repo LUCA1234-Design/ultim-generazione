@@ -90,6 +90,12 @@ try:
 except ImportError:
     _MSG_BUS_AVAILABLE = False
 
+try:
+    from risk_institutional.institutional_risk_manager import InstitutionalRiskManager
+    _INSTITUTIONAL_RISK_AVAILABLE = True
+except ImportError:
+    _INSTITUTIONAL_RISK_AVAILABLE = False
+
 # ---- Engine ----
 from engine.decision_fusion import DecisionFusion
 from engine.execution import ExecutionEngine
@@ -791,6 +797,17 @@ def main():
             logger.info("🎓 PPO RL size hints: wired to EventProcessor")
         except Exception as _e:
             logger.debug(f"🎓 PPO wiring error: {_e}")
+
+        # ---- V18: Wire institutional risk manager (kill switch + ATR sizing + dynamic trailing) ----
+        try:
+            if _INSTITUTIONAL_RISK_AVAILABLE:
+                processor.institutional_risk = InstitutionalRiskManager(
+                    kill_switch=evolution_engine._kill_switch
+                )
+                processor.risk_alert_callback = send_message
+                logger.info("🛡️ InstitutionalRiskManager: wired to EventProcessor")
+        except Exception as _risk_wire_err:
+            logger.warning(f"InstitutionalRiskManager wiring error: {_risk_wire_err}")
 
         # ---- V18: Register MessageBus subscribers ----
         if msg_bus is not None:

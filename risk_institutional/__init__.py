@@ -12,3 +12,7 @@ Provides:
 All modules are thread-safe and designed to run continuously as
 risk guards alongside the V17 trading pipeline.
 """
+
+from risk_institutional.institutional_risk_manager import InstitutionalRiskManager
+
+__all__ = ["InstitutionalRiskManager"]

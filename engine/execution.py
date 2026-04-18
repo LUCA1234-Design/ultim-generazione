@@ -25,7 +25,13 @@ from config.settings import (
     MAX_WEEKLY_LOSS_PCT,
     ORDER_ROUTING_ENABLED,
 )
+from data import data_store
 from data.binance_client import place_futures_order
+
+try:
+    from risk_institutional import InstitutionalRiskManager
+except Exception:
+    InstitutionalRiskManager = None
 
 logger = logging.getLogger("Execution")
 
@@ -115,6 +121,9 @@ class ExecutionEngine:
         self._peak_balance = initial_balance
         self._weekly_pnl = 0.0
         self._week_start = datetime.datetime.now(datetime.timezone.utc).isocalendar()[1]
+        self._standby = False
+        self._standby_reason = ""
+        self._institutional_risk_manager = None
         logger.info(
             f"ExecutionEngine: {'PAPER' if paper_trading else 'LIVE'} trading | "
             f"balance={initial_balance}"
@@ -204,6 +213,9 @@ class ExecutionEngine:
                       tp1: float, tp2: float, strategy: str = "",
                       decision_id: str = "") -> Optional[Position]:
         """Open a new position (paper or live)."""
+        if self._standby:
+            logger.warning(f"🛑 Standby active: blocking new position for {symbol} ({self._standby_reason})")
+            return None
         pos_id = str(uuid.uuid4())[:8]
         pos = Position(
             position_id=pos_id,
@@ -423,9 +435,8 @@ class ExecutionEngine:
                     pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
                 elif pos.tp1_hit and not pos.tp2_hit:
-                    # Trailing stop: trail at configured ratio of TP1 distance
-                    trail_distance = abs(pos.tp1 - pos.entry_price) * _TRAIL_STOP_RATIO
-                    new_sl = current_price - trail_distance
+                    # Dynamic trailing stop from rolling standard deviation
+                    new_sl = self._compute_dynamic_trailing_sl(pos, current_price)
                     if new_sl > pos.sl:
                         pos.sl = new_sl
                         logger.debug(f"📈 Trail SL [{pos_id}] {pos.symbol} → {new_sl:.4f}")
@@ -460,9 +471,8 @@ class ExecutionEngine:
                     pos.tp2_hit = True
                     to_close.append((pos_id, current_price, "tp2_hit"))
                 elif pos.tp1_hit and not pos.tp2_hit:
-                    # Trailing stop: trail at configured ratio of TP1 distance
-                    trail_distance = abs(pos.tp1 - pos.entry_price) * _TRAIL_STOP_RATIO
-                    new_sl = current_price + trail_distance
+                    # Dynamic trailing stop from rolling standard deviation
+                    new_sl = self._compute_dynamic_trailing_sl(pos, current_price)
                     if new_sl < pos.sl:
                         pos.sl = new_sl
                         logger.debug(f"📉 Trail SL [{pos_id}] {pos.symbol} → {new_sl:.4f}")
@@ -472,6 +482,63 @@ class ExecutionEngine:
             if closed is not None:
                 closed_positions.append(closed)
 
+        return closed_positions
+
+    def _compute_dynamic_trailing_sl(self, pos: Position, current_price: float) -> float:
+        # Fallback trail distance is used for graceful degradation if
+        # institutional risk utilities or market data are unavailable.
+        fallback_distance = abs(pos.tp1 - pos.entry_price) * _TRAIL_STOP_RATIO
+        fallback_sl = (
+            current_price - fallback_distance
+            if pos.direction == "long"
+            else current_price + fallback_distance
+        )
+        try:
+            df = data_store.get_df(pos.symbol, pos.interval)
+            closes = [] if df is None else list(df["close"].tail(50).astype(float))
+            if InstitutionalRiskManager is None:
+                return float(fallback_sl)
+            if self._institutional_risk_manager is None:
+                self._institutional_risk_manager = InstitutionalRiskManager()
+            return self._institutional_risk_manager.trailing_stop_from_std(
+                direction=pos.direction,
+                current_price=float(current_price),
+                existing_sl=float(pos.sl),
+                closes=closes,
+            )
+        except Exception:
+            return float(fallback_sl)
+
+    def set_standby(self, enabled: bool, reason: str = "") -> None:
+        with self._lock:
+            self._standby = bool(enabled)
+            self._standby_reason = reason if enabled else ""
+        status = "ON" if enabled else "OFF"
+        logger.warning(f"🛑 Execution standby {status} {('- ' + reason) if reason else ''}")
+
+    def is_standby(self) -> bool:
+        with self._lock:
+            return bool(self._standby)
+
+    def cancel_pending_orders(self) -> int:
+        # No pending order book is tracked internally in this engine version.
+        return 0
+
+    def close_all_positions(self, reason: str = "kill_switch") -> List[Position]:
+        closed_positions: List[Position] = []
+        with self._lock:
+            snapshot = list(self._open_positions.items())
+        for pos_id, pos in snapshot:
+            close_price = pos.entry_price
+            try:
+                df = data_store.get_df(pos.symbol, pos.interval)
+                if df is not None and len(df) > 0:
+                    close_price = float(df["close"].iloc[-1])
+            except Exception:
+                pass
+            closed = self.close_position(pos_id, close_price, reason=reason)
+            if closed is not None:
+                closed_positions.append(closed)
         return closed_positions
 
     # ------------------------------------------------------------------
@@ -501,6 +568,8 @@ class ExecutionEngine:
                 "peak_balance": self._peak_balance,
                 "total_drawdown_pct": (self._peak_balance - self._balance) / self._peak_balance * 100
                     if self._peak_balance > 0 else 0.0,
+                "standby": self._standby,
+                "standby_reason": self._standby_reason,
             }
 
     def get_open_positions(self) -> List[Position]:
