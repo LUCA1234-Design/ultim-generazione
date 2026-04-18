@@ -46,7 +46,7 @@ _WS_CONNECTED_AT: Dict[str, float] = {}  # ws_name -> timestamp of last on_open
 # Callbacks registered by the event processor
 _on_kline_closed: Optional[Callable] = None
 _on_kline_update: Optional[Callable] = None
-_SECONDS_TS_UPPER_BOUND = 100_000_000_000  # 100B milliseconds since epoch is ~1973; modern ms timestamps are larger, so lower values are treated as seconds
+_SECONDS_TS_UPPER_BOUND = 100_000_000_000  # heuristic boundary to distinguish seconds-based vs milliseconds-based Unix timestamps
 
 
 def register_callbacks(on_closed: Callable, on_update: Callable) -> None:

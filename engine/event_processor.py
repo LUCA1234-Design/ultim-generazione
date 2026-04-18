@@ -18,7 +18,7 @@ from engine.decision_fusion import DecisionFusion, FusionResult, DECISION_HOLD, 
 from engine.execution import ExecutionEngine
 from data import data_store
 import config.settings as _cfg
-from config.settings import TRAINING_MODE, TRAINING_POSITION_TIMEOUT_MINUTES
+from config.settings import TRAINING_MODE, TRAINING_POSITION_TIMEOUT_MINUTES, TRAINING_MIN_PATTERN_SCORE
 
 logger = logging.getLogger("EventProcessor")
 
@@ -464,7 +464,7 @@ class EventProcessor:
             has_sniper_pattern_confirmation = pattern_score is not None and pattern_score >= 0.65
             # In Training Mode allow volatile regime with weak pattern (except extreme weakness).
             if TRAINING_MODE:
-                if pattern_score is not None and pattern_score < 0.35:
+                if pattern_score is not None and pattern_score < TRAINING_MIN_PATTERN_SCORE:
                     self._skip("unfavorable_regime")
                     logger.info(
                         f"⛔ {symbol}/{interval} SKIP: volatile_regime_very_weak_pattern "
