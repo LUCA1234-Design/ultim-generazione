@@ -96,7 +96,7 @@ def test_confluence_training_thresholds_are_relaxed(monkeypatch):
     assert res.metadata["agreeing_tfs"] == 3
 
 
-def test_regime_training_relaxes_capitulation_penalty():
+def test_regime_training_relaxes_capitulation_penalty(monkeypatch):
     agent = RegimeAgent()
     df = pd.DataFrame({
         "open": [1.0] * 80,
@@ -106,10 +106,10 @@ def test_regime_training_relaxes_capitulation_penalty():
         "volume": [1.0] * 80,
     })
     agent._fitted_keys.add(("BTCUSDT", "1h"))
-    agent.get_regime_probs = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+    monkeypatch.setattr(agent, "get_regime_probs", lambda *_args, **_kwargs: {
         "capitulation": 0.9,
         "ranging": 0.1,
-    }
+    })
     res = agent.analyse("BTCUSDT", "1h", df)
     assert res is not None
     assert res.score >= 0.60
