@@ -14,7 +14,7 @@ from sklearn.preprocessing import StandardScaler
 
 from agents.base_agent import BaseAgent, AgentResult
 from indicators.technical import rsi, atr, adx, bollinger_bands, keltner_channels, zscore, ema_slope, volume_ratio
-from config.settings import REGIME_N_COMPONENTS, REGIME_NAMES, REGIME_LOOKBACK
+from config.settings import REGIME_N_COMPONENTS, REGIME_NAMES, REGIME_LOOKBACK, TRAINING_MODE
 
 logger = logging.getLogger("RegimeAgent")
 
@@ -232,15 +232,16 @@ class RegimeAgent(BaseAgent):
         regime = max(probs, key=probs.get)
         regime_prob = probs[regime]
 
-        # Score: trending_up è il più favorevole, capitulation il peggiore
+        # Score: trending_up è il più favorevole, capitulation il peggiore.
+        # In Training Mode keep regimes less punitive so the bot can collect experience.
         if regime in ("trending_up", "trending"):
             score = 0.75 + 0.25 * max(trending_up_prob, trending_prob)
         elif regime == "trending_down":
             score = 0.65 + 0.20 * trending_down_prob
         elif regime == "volatile":
-            score = 0.55 + 0.20 * volatile_prob
+            score = (0.60 + 0.25 * volatile_prob) if TRAINING_MODE else (0.55 + 0.20 * volatile_prob)
         elif regime == "capitulation":
-            score = 0.25 + 0.10 * capitulation_prob  # molto penalizzato
+            score = (0.45 + 0.20 * capitulation_prob) if TRAINING_MODE else (0.25 + 0.10 * capitulation_prob)
         else:  # ranging
             score = 0.50 + 0.25 * ranging_prob
 

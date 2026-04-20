@@ -269,23 +269,54 @@ def build_startup_message(n_symbols: int, n_hg: int, paper: bool) -> str:
 def build_stats_message(exec_stats: Dict[str, Any],
                          perf_summary: Dict[str, Any],
                          agent_report: Dict[str, Any]) -> str:
+    exec_stats = exec_stats if isinstance(exec_stats, dict) else {}
+    perf_summary = perf_summary if isinstance(perf_summary, dict) else {}
+    agent_report = agent_report if isinstance(agent_report, dict) else {}
+
+    def _to_float(value: Any, default: float = 0.0) -> float:
+        try:
+            if value is None:
+                return default
+            return float(value)
+        except Exception:
+            return default
+
+    def _to_int(value: Any, default: int = 0) -> int:
+        try:
+            if value is None:
+                return default
+            return int(value)
+        except Exception:
+            return default
+
+    balance = _to_float(exec_stats.get("balance", 0.0))
+    total_pnl = _to_float(exec_stats.get("total_pnl", 0.0))
+    pnl_pct = _to_float(exec_stats.get("pnl_pct", 0.0))
+    win_rate = _to_float(perf_summary.get("win_rate", 0.0))
+    wins = _to_int(perf_summary.get("wins", 0))
+    losses = _to_int(perf_summary.get("losses", 0))
+    sharpe = _to_float(perf_summary.get("sharpe", 0.0))
+
     lines = [
         "📊 *V17 Performance Report*\n",
-        f"💰 Balance: `{exec_stats.get('balance', 0):.2f}` USDT",
-        f"📈 Total P&L: `{exec_stats.get('total_pnl', 0):+.4f}` ({exec_stats.get('pnl_pct', 0):+.2f}%)",
-        f"🏆 Win Rate: `{perf_summary.get('win_rate', 0):.1%}` "
-        f"({perf_summary.get('wins', 0)}W / {perf_summary.get('losses', 0)}L)",
-        f"📉 Sharpe: `{perf_summary.get('sharpe', 0):.2f}`",
+        f"💰 Balance: `{balance:.2f}` USDT",
+        f"📈 Total P&L: `{total_pnl:+.4f}` ({pnl_pct:+.2f}%)",
+        f"🏆 Win Rate: `{win_rate:.1%}` ({wins}W / {losses}L)",
+        f"📉 Sharpe: `{sharpe:.2f}`",
         "",
         "🤖 *Agent Weights:*",
     ]
+    added_agent_line = False
     for name, info in agent_report.items():
         if not isinstance(info, dict):
             continue
-        w = info.get("weight", 1.0) or 1.0
-        wr = info.get("win_rate", 0.5)
-        n = info.get("n_decisions", 0)
+        w = _to_float(info.get("weight", 1.0), 1.0)
+        wr = _to_float(info.get("win_rate", 0.0), 0.0)
+        n = _to_int(info.get("n_decisions", 0), 0)
         lines.append(f"  • {name}: w={w:.2f} wr={wr:.1%} n={n}")
+        added_agent_line = True
+    if not added_agent_line:
+        lines.append("  • no agent stats yet (0 trades recorded)")
     return "\n".join(lines)
 
 

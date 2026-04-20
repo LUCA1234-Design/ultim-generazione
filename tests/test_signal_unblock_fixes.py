@@ -1,9 +1,14 @@
 import json
 from collections import deque
 
+import pandas as pd
+
 import config.settings as settings
 import data.websocket_manager as ws_manager
 import services.latency_monitor as latency_monitor
+import agents.confluence_agent as confluence_mod
+from agents.confluence_agent import ConfluenceAgent
+from agents.regime_agent import RegimeAgent
 from notifications.telegram_service import build_stats_message
 
 
@@ -17,6 +22,17 @@ def test_build_stats_message_skips_non_agent_entries():
         },
     )
     assert "pattern: w=1.20 wr=60.0% n=10" in msg
+
+
+def test_build_stats_message_handles_empty_inputs():
+    msg = build_stats_message(
+        exec_stats={"balance": None, "total_pnl": None, "pnl_pct": None},
+        perf_summary={"win_rate": None, "wins": None, "losses": None, "sharpe": None},
+        agent_report=None,
+    )
+    assert "Balance: `0.00`" in msg
+    assert "Win Rate: `0.0%` (0W / 0L)" in msg
+    assert "no agent stats yet (0 trades recorded)" in msg
 
 
 def test_record_ws_delay_filters_bad_values():
@@ -57,3 +73,41 @@ def test_training_mode_thresholds_relaxed():
     assert settings.TRAINING_FUSION_THRESHOLD <= 0.30
     assert settings.TRAINING_MIN_FUSION_SCORE <= 0.25
     assert settings.TRAINING_MIN_RR <= 0.90
+
+
+def test_confluence_training_thresholds_are_relaxed(monkeypatch):
+    monkeypatch.setattr(confluence_mod, "TRAINING_MODE", True)
+    agent = ConfluenceAgent()
+
+    def _fake_compute_confluence(symbol, primary_interval, direction):
+        return {
+            "tf_scores": {"15m": 0.40, "1h": 0.32, "4h": 0.40, "1d": 0.40},
+            "confluence": 0.40,
+            "direction_agreement": 1.0,
+            "agreement_mult": 1.0,
+        }
+
+    monkeypatch.setattr(agent, "compute_confluence", _fake_compute_confluence)
+    df = pd.DataFrame({"close": [float(i) for i in range(60)]})
+    res = agent.analyse("BTCUSDT", "1h", df, direction="long")
+    assert res is not None
+    assert res.metadata["agreeing_tfs"] == 3
+
+
+def test_regime_training_relaxes_capitulation_penalty():
+    agent = RegimeAgent()
+    df = pd.DataFrame({
+        "open": [1.0] * 80,
+        "high": [1.0] * 80,
+        "low": [1.0] * 80,
+        "close": [1.0] * 80,
+        "volume": [1.0] * 80,
+    })
+    agent._fitted_keys.add(("BTCUSDT", "1h"))
+    agent.get_regime_probs = lambda *_args, **_kwargs: {  # type: ignore[method-assign]
+        "capitulation": 0.9,
+        "ranging": 0.1,
+    }
+    res = agent.analyse("BTCUSDT", "1h", df)
+    assert res is not None
+    assert res.score >= 0.60
