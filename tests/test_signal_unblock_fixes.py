@@ -31,7 +31,9 @@ def test_build_stats_message_handles_empty_inputs():
         agent_report=None,
     )
     assert "Balance: `0.00`" in msg
+    assert "Total P&L: `+0.0000` (+0.00%)" in msg
     assert "Win Rate: `0.0%` (0W / 0L)" in msg
+    assert "Sharpe: `0.00`" in msg
     assert "no agent stats yet (0 trades recorded)" in msg
 
 

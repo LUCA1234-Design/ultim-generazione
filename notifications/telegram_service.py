@@ -278,7 +278,7 @@ def build_stats_message(exec_stats: Dict[str, Any],
             if value is None:
                 return default
             return float(value)
-        except Exception:
+        except (TypeError, ValueError):
             return default
 
     def _to_int(value: Any, default: int = 0) -> int:
@@ -286,7 +286,7 @@ def build_stats_message(exec_stats: Dict[str, Any],
             if value is None:
                 return default
             return int(value)
-        except Exception:
+        except (TypeError, ValueError):
             return default
 
     balance = _to_float(exec_stats.get("balance", 0.0))
@@ -310,9 +310,9 @@ def build_stats_message(exec_stats: Dict[str, Any],
     for name, info in agent_report.items():
         if not isinstance(info, dict):
             continue
-        w = _to_float(info.get("weight", 1.0), 1.0)
-        wr = _to_float(info.get("win_rate", 0.0), 0.0)
-        n = _to_int(info.get("n_decisions", 0), 0)
+        w = _to_float(info.get("weight"), 1.0)
+        wr = _to_float(info.get("win_rate"))
+        n = _to_int(info.get("n_decisions"))
         lines.append(f"  • {name}: w={w:.2f} wr={wr:.1%} n={n}")
         added_agent_line = True
     if not added_agent_line:
