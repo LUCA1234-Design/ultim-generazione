@@ -660,7 +660,11 @@ def _report_loop(processor: EventProcessor, tracker: PerformanceTracker,
         try:
             exec_stats = processor.execution.get_stats()
             perf_summary = tracker.get_summary()
-            agent_report = meta.get_report()
+            try:
+                agent_report = meta.get_report() if meta is not None else {}
+            except Exception as report_err:
+                logger.warning(f"meta.get_report failed, using empty report: {report_err}")
+                agent_report = {}
             msg = build_stats_message(exec_stats, perf_summary, agent_report)
             send_message(msg)
             logger.info("📊 Periodic report sent")

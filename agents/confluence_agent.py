@@ -12,6 +12,7 @@ from agents.base_agent import BaseAgent, AgentResult
 from indicators.technical import rsi, macd, adx, bollinger_bands, obv, zscore, vwap, supertrend, ema
 from indicators.smart_money import cumulative_volume_delta, liquidity_sweep
 from data import data_store
+from config.settings import TRAINING_MODE
 
 logger = logging.getLogger("ConfluenceAgent")
 
@@ -28,6 +29,9 @@ _OPPOSITE_SCORE_PENALTY = 0.85      # score multiplier applied when flipping dir
 _TF_AGREEMENT_THRESHOLD = 0.50      # minimum TF score to be considered "agreeing"
 _PRIMARY_TF_WEAK_THRESHOLD = 0.45   # primary TF score below this triggers penalty
 _PRIMARY_TF_WEAK_PENALTY = 0.80     # multiplier applied when primary TF is weak
+_TRAINING_TF_AGREEMENT_THRESHOLD = 0.35
+_TRAINING_PRIMARY_TF_WEAK_THRESHOLD = 0.30
+_TRAINING_PRIMARY_TF_WEAK_PENALTY = 0.95
 
 
 class ConfluenceAgent(BaseAgent):
@@ -238,15 +242,23 @@ class ConfluenceAgent(BaseAgent):
         details.append(f"primary={primary_score:.2f}")
         details.append(f"opposite={opposite_score:.2f}")
 
-        # === SOGLIA ALZATA A 0.50 ===
-        agreeing = sum(1 for v in tf_scores.values() if v > _TF_AGREEMENT_THRESHOLD)
+        agreement_threshold = (
+            _TRAINING_TF_AGREEMENT_THRESHOLD if TRAINING_MODE else _TF_AGREEMENT_THRESHOLD
+        )
+        primary_tf_weak_threshold = (
+            _TRAINING_PRIMARY_TF_WEAK_THRESHOLD if TRAINING_MODE else _PRIMARY_TF_WEAK_THRESHOLD
+        )
+        primary_tf_weak_penalty = (
+            _TRAINING_PRIMARY_TF_WEAK_PENALTY if TRAINING_MODE else _PRIMARY_TF_WEAK_PENALTY
+        )
+        agreeing = sum(1 for v in tf_scores.values() if v > agreement_threshold)
         total_tfs = len(tf_scores)
 
         # Penalità se il TF primario è debole
         primary_tf_score = tf_scores.get(interval, 0.0)
-        if primary_tf_score < _PRIMARY_TF_WEAK_THRESHOLD:
-            final_score *= _PRIMARY_TF_WEAK_PENALTY
-            details.append(f"primary_tf_weak({primary_tf_score:.2f})x{_PRIMARY_TF_WEAK_PENALTY}")
+        if primary_tf_score < primary_tf_weak_threshold:
+            final_score *= primary_tf_weak_penalty
+            details.append(f"primary_tf_weak({primary_tf_score:.2f})x{primary_tf_weak_penalty}")
 
         # confidence = frazione TF sopra 0.50 (non 0.40)
         confidence = agreeing / max(total_tfs, 1)
